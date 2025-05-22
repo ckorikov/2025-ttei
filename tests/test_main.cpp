@@ -412,6 +412,786 @@ TEST(ModelTest, ForwardAndBackwardVSTorch)
     EXPECT_NEAR(layer2->bias.grad[0], 2.0000f, 1e-4f);
 }
 
+TEST(TensorTransposeTest, BasicTransposition)
+{
+    Tensor t;
+    t.shape = {2, 3};
+    t.data = {1, 2, 3, 4, 5, 6};
+
+    Tensor result = t.transpose(0, 1);
+
+    EXPECT_EQ(result.shape, std::vector<size_t>({3, 2}));
+    EXPECT_EQ(result.data, std::vector<float>({1, 4, 2, 5, 3, 6}));
+}
+
+TEST(TensorTransposeTest, IdentityTransposition)
+{
+    Tensor t;
+    t.shape = {2, 3, 4};
+    t.resize();
+    std::iota(t.data.begin(), t.data.end(), 1);
+    
+    Tensor result = t.transpose(1, 1);
+    
+    EXPECT_EQ(result.shape, t.shape);
+    EXPECT_EQ(result.data, t.data);
+}
+
+TEST(TensorTransposeTest, HigherDimTransposition)
+{
+    /*PyTorch refernce
+    import torch
+
+    tensor = torch.arange(1, 25).reshape(2, 3, 4)
+
+    transposed_tensor = tensor.transpose(0, 2)
+
+    print(transposed_tensor.flatten()[0])
+    print(transposed_tensor.flatten()[1])
+    print(transposed_tensor.flatten()[4])
+    print(transposed_tensor.flatten()[23])
+    Output:
+    tensor(1)
+    tensor(13)
+    tensor(9)
+    tensor(24)
+    */
+
+    Tensor t;
+    t.shape = {2, 3, 4};
+    t.resize();
+    std::iota(t.data.begin(), t.data.end(), 1);
+    
+    Tensor result = t.transpose(0, 2);
+    
+    EXPECT_EQ(result.shape, std::vector<size_t>({4, 3, 2}));
+    
+    EXPECT_FLOAT_EQ(result.data[0], 1);
+    EXPECT_FLOAT_EQ(result.data[1], 13);
+    EXPECT_FLOAT_EQ(result.data[4], 9);
+    EXPECT_FLOAT_EQ(result.data[23], 24);
+}
+
+TEST(TensorTransposeTest, InvalidDimensions)
+{
+    Tensor t;
+    t.shape = {2, 3};
+    
+    EXPECT_THROW(t.transpose(0, 5), std::invalid_argument);
+    EXPECT_THROW(t.transpose(5, 0), std::invalid_argument);
+    EXPECT_THROW(t.transpose(5, 5), std::invalid_argument);
+}
+
+TEST(TensorTransposeTest, EmptyTensor)
+{
+    Tensor t;
+    
+    EXPECT_THROW(t.transpose(0, 1), std::invalid_argument);
+}
+
+TEST(TensorTransposeTest, DataIntegrity)
+{
+    Tensor t;
+    t.shape = {3, 3};
+    t.data = {1,2,3,4,5,6,7,8,9};
+    
+    Tensor t1 = t.transpose(0, 1);
+    Tensor t2 = t1.transpose(0, 1);
+
+    EXPECT_EQ(t2.shape, t.shape);
+    EXPECT_EQ(t2.data, t.data);
+}
+
+TEST(TensorMatMulTest, SimpleMatrixMultiplication)
+{
+    Tensor a;
+    a.shape = {2, 3};
+    a.data = {1, 2, 3, 
+              4, 5, 6};
+    
+    Tensor b;
+    b.shape = {3, 2};
+    b.data = {7, 8, 
+              9, 10,
+              11, 12};
+    
+    Tensor expected;
+    expected.shape = {2, 2};
+    expected.data = {58, 64, 
+                    139, 154};
+    
+    Tensor result;
+    result = result.matmul(a, b);
+    EXPECT_EQ(result.shape, expected.shape);
+    for (size_t i = 0; i < expected.data.size(); ++i) {
+        EXPECT_FLOAT_EQ(result.data[i], expected.data[i]);
+    }
+}
+
+TEST(TensorMatMulTest, BatchMatrixMultiplication)
+{
+    /*PyTorch refernce
+    import torch
+
+    tensor1 = torch.arange(1, 13).reshape(2, 2, 3)
+    tensor2 = torch.arange(1, 13).reshape(2, 3, 2)
+
+    print(tensor1 @ tensor2)
+
+    Output:
+    tensor([[[ 22,  28],
+            [ 49,  64]],
+
+            [[220, 244],
+            [301, 334]]])
+    */
+    Tensor a;
+    a.shape = {2, 2, 3};
+    a.data = {1,2,3,4,5,6,
+              7,8,9,10,11,12};
+
+    Tensor b;
+    b.shape = {2, 3, 2};
+    b.data = {1,2,3,4,5,6,
+              7,8,9,10,11,12}; 
+    
+    Tensor expected;
+    expected.shape = {2, 2, 2};
+    expected.data = {22, 28,  
+                     49, 64,
+                     220, 244,
+                     301, 334};
+    
+    Tensor result;
+    result = result.matmul(a, b);
+    ASSERT_EQ(result.shape, expected.shape);
+    for (size_t i = 0; i < expected.data.size(); ++i) {
+        EXPECT_FLOAT_EQ(result.data[i], expected.data[i]);
+    }
+}
+
+TEST(TensorMatMulTest, VectorMatrixMultiplication)
+{
+    Tensor a;
+    a.shape = {1, 3};
+    a.data = {1, 2, 3};
+    
+    Tensor b;
+    b.shape = {3, 2};
+    b.data = {4,5,6,7,8,9};
+    
+    Tensor expected;
+    expected.shape = {1, 2};
+    expected.data = {40, 46};
+    
+    Tensor result;
+    result = result.matmul(a, b);
+    EXPECT_EQ(result.shape, expected.shape);
+    EXPECT_FLOAT_EQ(result.data[0], expected.data[0]);
+    EXPECT_FLOAT_EQ(result.data[1], expected.data[1]);
+}
+
+TEST(TensorMatMulTest, DimensionMismatchError)
+{
+    Tensor a;
+    a.shape = {2, 3};
+    Tensor b;
+    b.shape = {4, 5};
+    
+    EXPECT_THROW(a.matmul(a, b), std::invalid_argument);
+}
+
+TEST(TensorMatMulTest, NotEnoughDimensionsError)
+{
+    Tensor a;
+    a.shape = {3};
+    Tensor b;
+    b.shape = {3};
+    
+    EXPECT_THROW(a.matmul(a, b), std::invalid_argument);
+}
+
+TEST(TensorMatMulTest, BatchSizeMismatchError)
+{
+    Tensor a;
+    a.shape = {2, 2, 3};
+    Tensor b;
+    b.shape = {3, 3, 3};
+    
+    EXPECT_THROW(a.matmul(a, b), std::invalid_argument);
+}
+
+TEST(TensorMatMulTest, LargeMatrixPerformance)
+{
+    Tensor a;
+    a.shape = {100, 100};
+    a.resize();
+    std::fill(a.data.begin(), a.data.end(), 1.0f);
+    
+    Tensor b;
+    b.shape = {100, 100};
+    b.resize();
+    std::fill(b.data.begin(), b.data.end(), 1.0f);
+    
+    auto start = std::chrono::high_resolution_clock::now();
+    Tensor result = a.matmul(a, b);
+    auto end = std::chrono::high_resolution_clock::now();
+    
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    EXPECT_LT(duration.count(), 1000);
+    
+    EXPECT_FLOAT_EQ(result.data[0], 100.0f);
+    EXPECT_FLOAT_EQ(result.data[result.data.size()-1], 100.0f);
+}
+
+TEST(TensorMatMulTest, FloatingPointPrecision)
+{
+    Tensor a;
+    a.shape = {2, 2};
+    a.data = {0.1f, 0.2f, 0.3f, 0.4f};
+    
+    Tensor b;
+    b.shape = {2, 2};
+    b.data = {0.5f, 0.6f, 0.7f, 0.8f};
+    
+    Tensor result = a.matmul(a, b);
+    
+    EXPECT_NEAR(result.data[0], 0.19f, 1e-6f);
+    EXPECT_NEAR(result.data[1], 0.22f, 1e-6f);
+    EXPECT_NEAR(result.data[2], 0.43f, 1e-6f);
+    EXPECT_NEAR(result.data[3], 0.5f, 1e-6f);
+}
+
+TEST(TensorViewTest, BasicReshape)
+{
+    Tensor t;
+    t.shape = {2, 3};
+    t.data = {1, 2, 3, 4, 5, 6};
+    
+    Tensor result = t.view({3, 2});
+    
+    EXPECT_EQ(result.shape, std::vector<size_t>({3, 2}));
+    
+    EXPECT_EQ(result.data, t.data);
+}
+
+TEST(TensorViewTest, FlattenToVector)
+{
+    Tensor t;
+    t.shape = {2, 2, 2};
+    t.resize();
+    std::iota(t.data.begin(), t.data.end(), 1);
+    
+    Tensor flat = t.view({8});
+    
+    EXPECT_EQ(flat.shape, std::vector<size_t>({8}));
+    EXPECT_EQ(flat.data.size(), 8);
+    EXPECT_EQ(flat.data, t.data);
+}
+
+TEST(TensorViewTest, AddDimensions)
+{
+    Tensor t;
+    t.shape = {6};
+    t.data = {1, 2, 3, 4, 5, 6};
+    
+    Tensor result = t.view({1, 3, 2});
+    
+    EXPECT_EQ(result.shape, std::vector<size_t>({1, 3, 2}));
+    EXPECT_EQ(result.data, t.data);
+}
+
+TEST(TensorViewTest, InvalidTotalSize)
+{
+    Tensor t;
+    t.shape = {4, 5};
+    t.resize();
+    
+    EXPECT_THROW(t.view({3, 7}), std::invalid_argument);
+}
+
+TEST(TensorViewTest, ZeroDimension)
+{
+    Tensor t;
+    t.shape = {4, 5};
+    t.resize();
+    
+    EXPECT_THROW(t.view({0, 20}), std::invalid_argument);
+}
+
+TEST(ScaledDotProductAttentionTest, BasicForward)
+{
+    ScaledDotProductAttention attn;
+    Tensor q, k, v, out;
+    
+    q.shape = {1, 1, 1}; q.data = {1.0f};
+    k.shape = {1, 1, 1}; k.data = {1.0f};
+    v.shape = {1, 1, 1}; v.data = {1.0f};
+    
+    attn.forward(q, k, v, out);
+    
+    EXPECT_EQ(out.shape, v.shape);
+    EXPECT_NEAR(out.data[0], 1.0f, 1e-6f);
+}
+
+TEST(ScaledDotProductAttentionTest, SmallMatrix)
+{
+    /*PyTorch refernce
+    import torch.nn as nn
+    import torch
+    import math
+
+    class ScaledDotProductAttention(nn.Module):
+        def __init__(self, dropout=0.1):
+            super(ScaledDotProductAttention, self).__init__()
+            self.dropout = nn.Dropout(dropout)
+        
+        def forward(self, q, k, v, mask=None):
+            d_k = q.size(-1)
+            attn_logits = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)
+
+            if mask is not None:
+                attn_logits = attn_logits.masked_fill(mask==0, -1e9)
+            
+            attention = torch.softmax(attn_logits, dim=-1)
+            # attention = self.dropout(attention)
+            values = torch.matmul(attention, v)
+
+            return values, attention
+        
+
+    q = torch.tensor([1, 0, 1, 0, 1, 0], dtype=torch.float).reshape(1, 2, 3)
+    k = torch.tensor([1, 1, 0, 0, 1, 1], dtype=torch.float).reshape(1, 2, 3)
+    v = torch.tensor([1, 2, 3, 4, 5, 6], dtype=torch.float).reshape(1, 2, 3)
+
+    s = ScaledDotProductAttention()
+
+    out, _ = s.forward(q, k, v)
+    print(out)
+
+    Output:
+    tensor([[[2.5000, 3.5000, 4.5000],
+            [2.5000, 3.5000, 4.5000]]])
+    */
+    ScaledDotProductAttention attn;
+    Tensor q, k, v, out;
+    
+    q.shape = {1, 2, 3}; q.data = {1, 0, 1, 0, 1, 0};
+    k.shape = {1, 2, 3}; k.data = {1, 1, 0, 0, 1, 1};
+    v.shape = {1, 2, 3}; v.data = {1, 2, 3, 4, 5, 6};
+    
+    attn.forward(q, k, v, out);
+    
+    EXPECT_EQ(out.shape, std::vector<size_t>({1, 2, 3}));
+    
+    EXPECT_NEAR(out.data[0], 2.5f, 1e-6f);
+    EXPECT_NEAR(out.data[2], 4.5f, 1e-6f);
+    EXPECT_NEAR(out.data[4], 3.5f, 1e-6f);
+}
+
+TEST(ScaledDotProductAttentionTest, BatchProcessing)
+{
+    ScaledDotProductAttention attn;
+    Tensor q, k, v, out;
+    
+    q.shape = {2, 2, 3}; q.data = {1,0,1, 0,1,0, 1,1,0, 0,0,1};
+    k.shape = {2, 2, 3}; k.data = {1,1,0, 0,1,1, 1,0,1, 0,1,0};
+    v.shape = {2, 2, 3}; v.data = {1,2,3, 4,5,6, 7,8,9, 10,11,12};
+    
+    attn.forward(q, k, v, out);
+    
+    EXPECT_EQ(out.shape, std::vector<size_t>({2, 2, 3}));
+    
+    EXPECT_EQ(out.data.size(), 12);
+}
+
+TEST(ScaledDotProductAttentionTest, DimensionMismatch)
+{
+    ScaledDotProductAttention attn;
+    Tensor q, k, v, out;
+    
+    q.shape = {1, 2, 3}; q.resize();
+    k.shape = {1, 4, 3}; k.resize();
+    v.shape = {1, 2, 3}; v.resize();
+    
+    EXPECT_THROW(attn.forward(q, k, v, out), std::invalid_argument);
+}
+
+TEST(ScaledDotProductAttentionTest, DifferentBatchSizes)
+{
+    ScaledDotProductAttention attn;
+    Tensor q, k, v, out;
+    
+    q.shape = {2, 2, 3}; q.resize();
+    k.shape = {3, 2, 3}; k.resize();
+    v.shape = {2, 2, 3}; v.resize();
+    
+    EXPECT_THROW(attn.forward(q, k, v, out), std::invalid_argument);
+}
+
+TEST(ScaledDotProductAttentionTest, LargeValues)
+{
+    ScaledDotProductAttention attn;
+    Tensor q, k, v, out;
+
+    q.shape = {1, 2, 2}; q.data = {1000, 1000, 1000, 1000};
+    k.shape = {1, 2, 2}; k.data = {1000, 1000, 1000, 1000};
+    v.shape = {1, 2, 2}; v.data = {1, 2, 3, 4};
+    
+    EXPECT_NO_THROW(attn.forward(q, k, v, out));
+    
+    for (float val : out.data)
+    {
+        EXPECT_FALSE(std::isnan(val));
+        EXPECT_FALSE(std::isinf(val));
+    }
+}
+
+TEST(ScaledDotProductAttentionTest, ScaleFactor)
+{
+    ScaledDotProductAttention attn;
+    Tensor q, k, v, out;
+    
+    q.shape = {1, 1, 10};
+    k.shape = {1, 1, 10};
+    v.shape = {1, 1, 10};
+    q.data.resize(10, 1.0f);
+    k.data.resize(10, 1.0f);
+    v.data.resize(10, 1.0f);
+    
+    attn.forward(q, k, v, out);
+    
+    EXPECT_NEAR(out.data[0], 1.0f, 0.5f);
+}
+
+TEST(MultiHeadAttentionTest, BasicForwardPass)
+{
+    const size_t d_model = 8;
+    const size_t num_heads = 2;
+    MultiHeadAttention mha(d_model, num_heads);
+
+    Tensor q;
+    q.shape = {2, 3, d_model};
+    Tensor k;
+    k.shape = {2, 3, d_model};
+    Tensor v;
+    v.shape = {2, 3, d_model};
+
+    q.resize(); std::iota(q.data.begin(), q.data.end(), 0.1f);
+    k.resize(); std::iota(k.data.begin(), k.data.end(), 0.2f);
+    v.resize(); std::iota(v.data.begin(), v.data.end(), 0.3f);
+    
+    Tensor out;
+    EXPECT_NO_THROW(mha.forward(q, k, v, out));
+    
+    EXPECT_EQ(out.shape, std::vector<size_t>({2, 3, d_model}));
+    
+    // Проверяем, что выходные значения в разумных пределах
+    for (float val : out.data)
+    {
+        EXPECT_FALSE(std::isnan(val));
+        EXPECT_FALSE(std::isinf(val));
+    }
+}
+
+TEST(MultiHeadAttentionTest, OutputShapeConsistency)
+{
+    const size_t d_model = 12;
+    const size_t num_heads = 3;
+    MultiHeadAttention mha(d_model, num_heads);
+    
+    Tensor q1; q1.shape = {1, 5, d_model}; q1.resize();
+    Tensor q2; q2.shape = {3, 1, d_model}; q2.resize();
+    
+    Tensor k = q1.copy(), v = q1.copy(), out;
+    
+    mha.forward(q1, k, v, out);
+    EXPECT_EQ(out.shape, std::vector<size_t>({1, 5, d_model}));
+    
+    mha.forward(q2, q2, q2, out);
+    EXPECT_EQ(out.shape, std::vector<size_t>({3, 1, d_model}));
+}
+
+TEST(MultiHeadAttentionTest, InvalidInputDimensions)
+{
+    const size_t d_model = 8;
+    const size_t num_heads = 2;
+    MultiHeadAttention mha(d_model, num_heads);
+    
+    Tensor q; q.shape = {2, 3, d_model}; q.resize();
+    Tensor k; k.shape = {2, 4, d_model}; k.resize();
+    Tensor v; v.shape = {2, 3, d_model}; v.resize();
+    Tensor out;
+    
+    EXPECT_THROW(mha.forward(q, k, v, out), std::invalid_argument);
+}
+
+TEST(MultiHeadAttentionTest, InvalidHeadConfiguration)
+{
+    EXPECT_THROW(MultiHeadAttention(7, 2), std::runtime_error);
+}
+
+TEST(MultiHeadAttentionTest, SplitAndConcatOperations)
+{
+    const size_t d_model = 8;
+    const size_t num_heads = 2;
+    MultiHeadAttention mha(d_model, num_heads);
+    
+    Tensor t; t.shape = {1, 4, d_model};
+    t.resize();
+    std::iota(t.data.begin(), t.data.end(), 1.0f);
+    
+    // spit
+    Tensor original = t.copy();
+    mha.split(t);
+    
+    EXPECT_EQ(t.shape, std::vector<size_t>({1, num_heads, 4, d_model/num_heads}));
+    
+    // concat
+    mha.concat(t);
+    EXPECT_EQ(t.shape, original.shape);
+    
+    // Проверяем, что данные не изменились
+    for (size_t i = 0; i < original.data.size(); ++i)
+    {
+        EXPECT_FLOAT_EQ(t.data[i], original.data[i]);
+    }
+}
+
+TEST(MultiHeadAttentionTest, LargeInputPerformance)
+{
+    const size_t d_model = 64;
+    const size_t num_heads = 8;
+    MultiHeadAttention mha(d_model, num_heads);
+    
+    // Большие тензоры (batch=4, seq_len=128)
+    Tensor q; q.shape = {4, 128, d_model}; q.resize();
+    Tensor k = q.copy(), v = q.copy();
+    Tensor out;
+    
+    auto start = std::chrono::high_resolution_clock::now();
+    mha.forward(q, k, v, out);
+    auto end = std::chrono::high_resolution_clock::now();
+    
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    EXPECT_LT(duration.count(), 200);
+    
+    EXPECT_EQ(out.shape, std::vector<size_t>({4, 128, d_model}));
+}
+
+TEST(MultiHeadAttentionTest, BasicBackwardPass)
+{
+    const size_t d_model = 8;
+    const size_t num_heads = 2;
+    const size_t batch_size = 2;
+    const size_t seq_len = 3;
+    
+    MultiHeadAttention mha(d_model, num_heads);
+    
+    // Инициализация входных тензоров
+    Tensor q, k, v;
+    q.shape = {batch_size, seq_len, d_model}; q.resize();
+    k.shape = {batch_size, seq_len, d_model}; k.resize();
+    v.shape = {batch_size, seq_len, d_model}; v.resize();
+    
+    std::iota(q.data.begin(), q.data.end(), 0.1f);
+    std::iota(k.data.begin(), k.data.end(), 0.2f);
+    std::iota(v.data.begin(), v.data.end(), 0.3f);
+    
+    // Прямой проход
+    Tensor out;
+    mha.forward(q, k, v, out);
+    
+    // Подготовка градиентов
+    out.grad.resize(out.data.size(), 1.0f); // Устанавливаем градиент в 1
+    
+    Tensor dq, dk, dv;
+    dq.shape = q.shape; dq.resize_grad();
+    dk.shape = k.shape; dk.resize_grad();
+    dv.shape = v.shape; dv.resize_grad();
+    
+    // Обратный проход
+    EXPECT_NO_THROW(mha.backward(out, dq, dk, dv));
+    
+    // Проверка градиентов
+    EXPECT_EQ(dq.grad.size(), q.data.size());
+    EXPECT_EQ(dk.grad.size(), k.data.size());
+    EXPECT_EQ(dv.grad.size(), v.data.size());
+    
+    // Проверка, что градиенты не нулевые
+    EXPECT_FALSE(std::all_of(dq.grad.begin(), dq.grad.end(), [](float g) { return g == 0.0f; }));
+    EXPECT_FALSE(std::all_of(dk.grad.begin(), dk.grad.end(), [](float g) { return g == 0.0f; }));
+    EXPECT_FALSE(std::all_of(dv.grad.begin(), dv.grad.end(), [](float g) { return g == 0.0f; }));
+}
+
+TEST(MultiHeadAttentionTest, WeightGradients)
+{
+    const size_t d_model = 12;
+    const size_t num_heads = 3;
+    
+    MultiHeadAttention mha(d_model, num_heads);
+    
+    Tensor q; q.shape = {1, 5, d_model}; q.resize();
+    Tensor k = q.copy(), v = q.copy(), out;
+    
+    mha.forward(q, k, v, out);
+    
+    // Сохраняем исходные веса
+    auto w_q_before = mha.w_q.weight.data;
+    auto w_k_before = mha.w_k.weight.data;
+    auto w_v_before = mha.w_v.weight.data;
+    auto w_concat_before = mha.w_concat.weight.data;
+    
+    // Обратный проход
+    out.grad.resize(out.data.size(), 1.0f);
+    Tensor dq, dk, dv;
+    dq.shape = q.shape; dq.resize_grad();
+    dk.shape = k.shape; dk.resize_grad();
+    dv.shape = v.shape; dv.resize_grad();
+    
+    mha.backward(out, dq, dk, dv);
+    
+    // Проверка, что веса не изменились
+    EXPECT_EQ(mha.w_q.weight.data, w_q_before);
+    EXPECT_EQ(mha.w_k.weight.data, w_k_before);
+    EXPECT_EQ(mha.w_v.weight.data, w_v_before);
+    EXPECT_EQ(mha.w_concat.weight.data, w_concat_before);
+    
+    // Проверка, что градиенты весов изменились
+    EXPECT_FALSE(mha.w_q.weight.grad.empty());
+    EXPECT_FALSE(mha.w_k.weight.grad.empty());
+    EXPECT_FALSE(mha.w_v.weight.grad.empty());
+    EXPECT_FALSE(mha.w_concat.weight.grad.empty());
+}
+
+TEST(MultiHeadAttentionTest, GradientNumericalCheck)
+{
+    const size_t d_model = 8;
+    const size_t num_heads = 2;
+    
+    MultiHeadAttention mha(d_model, num_heads);
+    
+    Tensor q; q.shape = {2, 3, d_model}; q.resize();
+    Tensor k = q.copy(), v = q.copy(), out;
+    
+    // Заполняем входные данные
+    for (size_t i = 0; i < q.data.size(); ++i)
+    {
+        q.data[i] = 0.1f * (i + 1);
+        k.data[i] = 0.2f * (i + 1);
+        v.data[i] = 0.3f * (i + 1);
+    }
+    
+    mha.forward(q, k, v, out);
+    
+    // Устанавливаем разные градиенты для выхода
+    out.grad.resize(out.data.size());
+    for (size_t i = 0; i < out.grad.size(); ++i)
+    {
+        out.grad[i] = (i % 3 + 1) * 0.1f;
+    }
+    
+    Tensor dq, dk, dv;
+    dq.shape = q.shape; dq.resize_grad();
+    dk.shape = k.shape; dk.resize_grad();
+    dv.shape = v.shape; dv.resize_grad();
+    
+    mha.backward(out, dq, dk, dv);
+    
+    // Проверка численных значений градиентов
+    float sum_dq = std::accumulate(dq.grad.begin(), dq.grad.end(), 0.0f);
+    float sum_dk = std::accumulate(dk.grad.begin(), dk.grad.end(), 0.0f);
+    float sum_dv = std::accumulate(dv.grad.begin(), dv.grad.end(), 0.0f);
+    
+    EXPECT_GT(std::abs(sum_dq), 0.001f);
+    EXPECT_GT(std::abs(sum_dk), 0.001f);
+    EXPECT_GT(std::abs(sum_dv), 0.001f);
+    
+    // Проверка отсутствия NaN/Inf
+    for (float g : dq.grad) EXPECT_FALSE(std::isnan(g));
+    for (float g : dk.grad) EXPECT_FALSE(std::isnan(g));
+    for (float g : dv.grad) EXPECT_FALSE(std::isnan(g));
+}
+
+TEST(MultiHeadAttentionTest, MultipleBackwardCalls)
+{
+    const size_t d_model = 16;
+    const size_t num_heads = 4;
+    
+    MultiHeadAttention mha(d_model, num_heads);
+    
+    Tensor q; q.shape = {1, 4, d_model}; q.resize();
+    Tensor k = q.copy(), v = q.copy(), out;
+    
+    std::iota(q.data.begin(), q.data.end(), 0.1f);
+    
+    mha.forward(q, k, v, out);
+    
+    // Первый обратный проход
+    out.grad.resize(out.data.size(), 1.0f);
+    Tensor dq1, dk1, dv1;
+    dq1.shape = q.shape; dq1.resize_grad();
+    dk1.shape = k.shape; dk1.resize_grad();
+    dv1.shape = v.shape; dv1.resize_grad();
+    
+    mha.backward(out, dq1, dk1, dv1);
+    
+    // Второй обратный проход с другими градиентами
+    for (size_t i = 0; i < out.grad.size(); ++i) {
+        out.grad[i] = (i % 2 + 1) * 0.5f;
+    }
+    
+    Tensor dq2, dk2, dv2;
+    dq2.shape = q.shape; dq2.resize_grad();
+    dk2.shape = k.shape; dk2.resize_grad();
+    dv2.shape = v.shape; dv2.resize_grad();
+    
+    mha.backward(out, dq2, dk2, dv2);
+    
+    // Проверка, что градиенты разные при разных входных градиентах
+    EXPECT_NE(dq1.grad, dq2.grad);
+    EXPECT_NE(dk1.grad, dk2.grad);
+    EXPECT_NE(dv1.grad, dv2.grad);
+}
+
+TEST(MultiHeadAttentionTest, LargeInputGradients)
+{
+    const size_t d_model = 64;
+    const size_t num_heads = 8;
+    const size_t batch_size = 4;
+    const size_t seq_len = 16;
+    
+    MultiHeadAttention mha(d_model, num_heads);
+    
+    Tensor q; q.shape = {batch_size, seq_len, d_model}; q.resize();
+    Tensor k = q.copy(), v = q.copy(), out;
+    
+    // Заполнение случайными данными
+    std::generate(q.data.begin(), q.data.end(), []() { return rand() / float(RAND_MAX); });
+    
+    mha.forward(q, k, v, out);
+    
+    // Обратный проход
+    out.grad.resize(out.data.size(), 1.0f);
+    
+    Tensor dq, dk, dv;
+    dq.shape = q.shape; dq.resize_grad();
+    dk.shape = k.shape; dk.resize_grad();
+    dv.shape = v.shape; dv.resize_grad();
+    
+    auto start = std::chrono::high_resolution_clock::now();
+    mha.backward(out, dq, dk, dv);
+    auto end = std::chrono::high_resolution_clock::now();
+    
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    EXPECT_LT(duration.count(), 100) << "Backward pass took too long";
+    
+    // Проверка размеров градиентов
+    EXPECT_EQ(dq.grad.size(), batch_size * seq_len * d_model);
+    EXPECT_EQ(dk.grad.size(), batch_size * seq_len * d_model);
+    EXPECT_EQ(dv.grad.size(), batch_size * seq_len * d_model);
+}
+
 int main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
