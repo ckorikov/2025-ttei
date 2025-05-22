@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Toy train-inference engine
 project(ttie VERSION 1.0 LANGUAGES CXX)
 
@@ -34,7 +36,7 @@ FetchContent_MakeAvailable(googletest)
 add_executable(tests tests/test_main.cpp)
 target_link_libraries(tests PRIVATE gtest gtest_main ttie)
 
-add_test(NAME tests COMMAND tests)
+add_test(NAME tests COMMAND tests --gtest_brief=1)
 
 # ------------------------------------------- Formatting
 
@@ -65,4 +67,40 @@ if(CLANG_FORMAT)
         COMMENT "Checking code style..."
         VERBATIM
     )
+endif()
+
+# ------------------------------------------- Code analysis
+
+find_program(CLANG_TIDY "clang-tidy")
+if(CLANG_TIDY)
+    set(TIDY_SOURCE_FILES
+        include/ttie/ttie.h
+        tests/test_main.cpp
+        example/main.cpp
+    )
+
+    foreach(file ${TIDY_SOURCE_FILES})
+        if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${file}")
+            message(WARNING "Clang-Tidy: File not found - ${file}")
+        endif()
+    endforeach()
+
+    string(REPLACE ";" " " TIDY_SOURCE_FILES_STRING "${TIDY_SOURCE_FILES}")
+
+    if(WIN32)
+        add_custom_target(tidy
+            COMMAND ${CMAKE_COMMAND} -E cmake_echo_color --cyan "Running clang-tidy and saving report in clang-tidy-report.log..."
+            COMMAND cmd /C "\"\"${CLANG_TIDY}\" -p ${CMAKE_BINARY_DIR} ${TIDY_SOURCE_FILES_STRING} > clang-tidy-report.log 2>&1\" || exit 0"
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            COMMENT "Running clang-tidy (Windows, errors suppressed)..."
+        )
+    else()
+        add_custom_target(tidy
+            COMMAND ${CMAKE_COMMAND} -E cmake_echo_color --cyan "Running clang-tidy and saving report in clang-tidy-report.log..."
+            COMMAND sh -c "\"${CLANG_TIDY}\" -p ${CMAKE_BINARY_DIR} ${TIDY_SOURCE_FILES_STRING} > clang-tidy-report.log 2>&1 || true"
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            COMMENT "Running clang-tidy (Unix, errors suppressed)..."
+            VERBATIM
+        )
+    endif()
 endif()

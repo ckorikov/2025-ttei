@@ -379,6 +379,153 @@ Tensor mse_loss(const Tensor &pred, const Tensor &target)
     return loss;
 }
 
+struct LSTM : public Model
+{
+    size_t input_dim;
+    size_t hidden_dim;
+    size_t num_layers;
+
+    LSTM(size_t D_in, size_t H, size_t L = 1)
+        : input_dim(D_in), hidden_dim(H), num_layers(L)
+    {
+        for (size_t layer = 0; layer < num_layers; ++layer)
+        {
+            size_t in_dim = (layer == 0 ? input_dim : hidden_dim);
+            add_layer(new Linear(in_dim, hidden_dim));
+            add_layer(new Sigmoid()); // ii
+            add_layer(new Linear(in_dim, hidden_dim));
+            add_layer(new Sigmoid()); // if
+            add_layer(new Linear(in_dim, hidden_dim));
+            add_layer(new Tanh()); // ig
+            add_layer(new Linear(in_dim, hidden_dim));
+            add_layer(new Sigmoid()); // io
+
+            add_layer(new Linear(hidden_dim, hidden_dim));
+            add_layer(new Sigmoid()); // hi
+            add_layer(new Linear(hidden_dim, hidden_dim));
+            add_layer(new Sigmoid()); // hf
+            add_layer(new Linear(hidden_dim, hidden_dim));
+            add_layer(new Tanh()); // hg
+            add_layer(new Linear(hidden_dim, hidden_dim));
+            add_layer(new Sigmoid()); // ho
+        }
+    }
+
+    std::string to_string() const
+    {
+        std::stringstream ss;
+        ss << "LSTM(D_in=" << input_dim << ", H=" << hidden_dim
+           << ", layers=" << num_layers << ")";
+        return ss.str();
+    }
+
+    void forward(const std::vector<Tensor> &inputs,
+                 std::vector<Tensor> &outputs) const
+    {
+        const Tensor &input_seq = inputs[0];
+        Tensor &output_seq = outputs[0];
+        const size_t T = input_seq.shape[0];
+        const size_t D = input_seq.shape[1];
+
+        std::vector<Tensor> h(num_layers), c(num_layers);
+        for (size_t l = 0; l < num_layers; ++l)
+        {
+            h[l].shape = {1, hidden_dim};
+            h[l].resize();
+            std::fill(h[l].data.begin(), h[l].data.end(), 0.0f);
+            c[l].shape = {1, hidden_dim};
+            c[l].resize();
+            std::fill(c[l].data.begin(), c[l].data.end(), 0.0f);
+        }
+
+        output_seq.shape = {T, hidden_dim};
+        output_seq.resize();
+
+        Tanh tanh_fn;
+
+        Tensor x_t;
+        x_t.shape = {1, D};
+        x_t.resize();
+        Tensor temp1, temp2, i_t, f_t, g_t, o_t;
+        temp1.shape = temp2.shape = i_t.shape = f_t.shape = g_t.shape =
+            o_t.shape = {hidden_dim};
+        temp1.resize();
+        temp2.resize();
+        i_t.resize();
+        f_t.resize();
+        g_t.resize();
+        o_t.resize();
+
+        for (size_t t = 0; t < T; ++t)
+        {
+            std::copy(input_seq.data.begin() + t * D,
+                      input_seq.data.begin() + (t + 1) * D, x_t.data.begin());
+
+            for (size_t l = 0; l < num_layers; ++l)
+            {
+                size_t base = l * 16;
+
+                // i
+                assert(base + 0 < layers.size());
+                layers[base + 0]->forward(x_t, temp1);
+                layers[base + 8]->forward(h[l], temp2);
+                for (size_t i = 0; i < hidden_dim; ++i)
+                    i_t.data[i] = temp1.data[i] + temp2.data[i];
+                layers[base + 1]->forward(i_t, i_t);
+
+                // f
+                layers[base + 2]->forward(x_t, temp1);
+                layers[base + 10]->forward(h[l], temp2);
+                for (size_t i = 0; i < hidden_dim; ++i)
+                    f_t.data[i] = temp1.data[i] + temp2.data[i];
+                layers[base + 3]->forward(f_t, f_t);
+
+                // g
+                layers[base + 4]->forward(x_t, temp1);
+                layers[base + 12]->forward(h[l], temp2);
+                for (size_t i = 0; i < hidden_dim; ++i)
+                    g_t.data[i] = temp1.data[i] + temp2.data[i];
+                layers[base + 5]->forward(g_t, g_t);
+
+                // o
+                layers[base + 6]->forward(x_t, temp1);
+                layers[base + 14]->forward(h[l], temp2);
+                for (size_t i = 0; i < hidden_dim; ++i)
+                    o_t.data[i] = temp1.data[i] + temp2.data[i];
+                layers[base + 7]->forward(o_t, o_t);
+
+                // c, h
+                for (size_t i = 0; i < hidden_dim; ++i)
+                {
+                    c[l].data[i] =
+                        f_t.data[i] * c[l].data[i] + i_t.data[i] * g_t.data[i];
+                }
+
+                tanh_fn.forward(c[l], temp1);
+                for (size_t i = 0; i < hidden_dim; ++i)
+                {
+                    h[l].data[i] = o_t.data[i] * temp1.data[i];
+                }
+
+                x_t = h[l];
+            }
+
+            std::copy(h.back().data.begin(), h.back().data.end(),
+                      output_seq.data.begin() + t * hidden_dim);
+        }
+    }
+
+    void backward(const std::vector<Tensor> &outputs,
+                  std::vector<Tensor> &inputs) const
+    {
+
+        const Tensor &output_seq = outputs[0];
+        Tensor &input_seq = inputs[0];
+        throw std::runtime_error("LSTM::backward() not implemented yet — "
+                                 "requires forward pass state caching.");
+    }
+};
+
 } // namespace ttie
 
 #endif // TTIE_H
