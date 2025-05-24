@@ -7,7 +7,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <math.h>
+#include <cmath>
 
 namespace ttie
 {
@@ -147,90 +147,6 @@ struct Tensor
         return result;
     }
 
-    Tensor matmul(const Tensor& a, const Tensor& b)
-    {
-        if (a.shape.size() < 2 || b.shape.size() < 2)
-        {
-            throw std::invalid_argument("Tensors must have at least 2 dimensions");
-        }
-
-        // Проверяем совместимость последних двух осей
-        size_t a_cols = a.shape.back();
-        size_t b_rows = b.shape[b.shape.size()-2];
-        size_t b_cols = b.shape.back();
-
-        if (a_cols != b_rows)
-        {
-            throw std::invalid_argument("Incompatible matrix dimensions for multiplication");
-        }
-
-        // Проверяем, что все остальные размерности совпадают
-        if (a.shape.size() != b.shape.size())
-        {
-            throw std::invalid_argument("Tensors must have same number of dimensions");
-        }
-
-        for (size_t i = 0; i < a.shape.size()-2; ++i)
-        {
-            if (a.shape[i] != b.shape[i])
-            {
-                throw std::invalid_argument("Batch dimensions must match");
-            }
-        }
-
-        // Создаем форму результата
-        std::vector<size_t> result_shape = a.shape;
-        result_shape.back() = b_cols; // Заменяем последнюю размерность
-        result_shape[result_shape.size()-2] = a.shape[a.shape.size()-2]; // Сохраняем предпоследнюю
-
-        Tensor result;
-        result.shape = result_shape;
-        result.resize();
-
-        // Вспомогательные переменные для индексации
-        size_t a_row_stride = a_cols;
-        size_t a_batch_stride = a.shape[a.shape.size()-2] * a_row_stride;
-        
-        size_t b_row_stride = b_cols;
-        size_t b_batch_stride = b_rows * b_row_stride;
-        
-        size_t result_row_stride = b_cols;
-        size_t result_batch_stride = a.shape[a.shape.size()-2] * result_row_stride;
-
-        // Общее количество "матриц" для перемножения
-        size_t total_matrices = 1;
-        for (size_t i = 0; i < a.shape.size()-2; ++i)
-        {
-            total_matrices *= a.shape[i];
-        }
-
-        // Выполняем матричное умножение для каждого батча/головы
-        for (size_t matrix = 0; matrix < total_matrices; ++matrix)
-        {
-            size_t a_offset = matrix * a_batch_stride;
-            size_t b_offset = matrix * b_batch_stride;
-            size_t result_offset = matrix * result_batch_stride;
-
-            for (size_t i = 0; i < a.shape[a.shape.size()-2]; ++i)
-            {
-                for (size_t j = 0; j < b_cols; ++j)
-                {
-                    float sum = 0.0f;
-                    for (size_t k = 0; k < a_cols; ++k)
-                    {
-                        size_t a_idx = a_offset + i * a_row_stride + k;
-                        size_t b_idx = b_offset + k * b_row_stride + j;
-                        sum += a.data[a_idx] * b.data[b_idx];
-                    }
-                    size_t result_idx = result_offset + i * result_row_stride + j;
-                    result.data[result_idx] = sum;
-                }
-            }
-        }
-
-        return result;
-    }
-
     Tensor view(const std::vector<size_t>& new_shape) const
     {
         if (!validate_shape())
@@ -299,6 +215,90 @@ struct Tensor
         return os;
     }
 };
+
+static Tensor matmul(const Tensor &a, const Tensor &b)
+{
+    if (a.shape.size() < 2 || b.shape.size() < 2)
+    {
+        throw std::invalid_argument("Tensors must have at least 2 dimensions");
+    }
+
+    // Проверяем совместимость последних двух осей
+    size_t a_cols = a.shape.back();
+    size_t b_rows = b.shape[b.shape.size()-2];
+    size_t b_cols = b.shape.back();
+
+    if (a_cols != b_rows)
+    {
+        throw std::invalid_argument("Incompatible matrix dimensions for multiplication");
+    }
+
+    // Проверяем, что все остальные размерности совпадают
+    if (a.shape.size() != b.shape.size())
+    {
+        throw std::invalid_argument("Tensors must have same number of dimensions");
+    }
+
+    for (size_t i = 0; i < a.shape.size()-2; ++i)
+    {
+        if (a.shape[i] != b.shape[i])
+        {
+            throw std::invalid_argument("Batch dimensions must match");
+        }
+    }
+
+    // Создаем форму результата
+    std::vector<size_t> result_shape = a.shape;
+    result_shape.back() = b_cols; // Заменяем последнюю размерность
+    result_shape[result_shape.size()-2] = a.shape[a.shape.size()-2]; // Сохраняем предпоследнюю
+
+    Tensor result;
+    result.shape = result_shape;
+    result.resize();
+
+    // Вспомогательные переменные для индексации
+    size_t a_row_stride = a_cols;
+    size_t a_batch_stride = a.shape[a.shape.size()-2] * a_row_stride;
+    
+    size_t b_row_stride = b_cols;
+    size_t b_batch_stride = b_rows * b_row_stride;
+    
+    size_t result_row_stride = b_cols;
+    size_t result_batch_stride = a.shape[a.shape.size()-2] * result_row_stride;
+
+    // Общее количество "матриц" для перемножения
+    size_t total_matrices = 1;
+    for (size_t i = 0; i < a.shape.size()-2; ++i)
+    {
+        total_matrices *= a.shape[i];
+    }
+
+    // Выполняем матричное умножение для каждого батча/головы
+    for (size_t matrix = 0; matrix < total_matrices; ++matrix)
+    {
+        size_t a_offset = matrix * a_batch_stride;
+        size_t b_offset = matrix * b_batch_stride;
+        size_t result_offset = matrix * result_batch_stride;
+
+        for (size_t i = 0; i < a.shape[a.shape.size()-2]; ++i)
+        {
+            for (size_t j = 0; j < b_cols; ++j)
+            {
+                float sum = 0.0f;
+                for (size_t k = 0; k < a_cols; ++k)
+                {
+                    size_t a_idx = a_offset + i * a_row_stride + k;
+                    size_t b_idx = b_offset + k * b_row_stride + j;
+                    sum += a.data[a_idx] * b.data[b_idx];
+                }
+                size_t result_idx = result_offset + i * result_row_stride + j;
+                result.data[result_idx] = sum;
+            }
+        }
+    }
+
+    return result;
+}
 
 struct Layer
 {
@@ -554,6 +554,42 @@ struct Model
     }
 };
 
+static Tensor softmax_for_mha(const Tensor &attention_score)
+{
+    // Применяем softmax по последнему измерению
+    Tensor attention;
+    attention.shape = attention_score.shape;
+    attention.resize();
+
+    const size_t last_dim = attention.shape.back();
+    const size_t num_elements = attention.data.size();
+
+    for (size_t i = 0; i < num_elements; i += last_dim)
+    {
+        // Находим максимум для численной стабильности
+        float max_val = attention_score.data[i];
+        for (size_t j = 1; j < last_dim; ++j)
+        {
+            max_val = std::max(max_val, attention_score.data[i + j]);
+        }
+
+        // Вычисляем экспоненты и их сумму
+        float sum_exp = 0.0f;
+        for (size_t j = 0; j < last_dim; ++j)
+        {
+            attention.data[i + j] = std::exp(attention_score.data[i + j] - max_val);
+            sum_exp += attention.data[i + j];
+        }
+
+        // Нормализуем для получения вероятностей
+        for (size_t j = 0; j < last_dim; ++j)
+        {
+            attention.data[i + j] /= sum_exp;
+        }
+    }
+    return attention;
+}
+
 struct ScaledDotProductAttention
 {
     Tensor saved_q, saved_k, saved_v;
@@ -576,7 +612,7 @@ struct ScaledDotProductAttention
         attn_scores.shape.back() = k.shape[k.shape.size() - 2];
         attn_scores.resize();
 
-        attn_scores = attn_scores.matmul(q, k.transpose(k.shape.size() - 2, k.shape.size() - 1));
+        attn_scores = matmul(q, k.transpose(k.shape.size() - 2, k.shape.size() - 1));
 
         scale = 1.0f / std::sqrt(static_cast<float>(d_k));
         for (size_t i = 0; i < attn_scores.data.size(); ++i)
@@ -584,38 +620,9 @@ struct ScaledDotProductAttention
             attn_scores.data[i] *= scale;
         }
 
-        // Применяем softmax по последнему измерению
-        attention.shape = attn_scores.shape;
-        attention.resize();
+        attention = softmax_for_mha(attn_scores);
 
-        const size_t last_dim = attention.shape.back();
-        const size_t num_elements = attention.data.size();
-
-        for (size_t i = 0; i < num_elements; i += last_dim)
-        {
-            // Находим максимум для численной стабильности
-            float max_val = attn_scores.data[i];
-            for (size_t j = 1; j < last_dim; ++j)
-            {
-                max_val = std::max(max_val, attn_scores.data[i + j]);
-            }
-
-            // Вычисляем экспоненты и их сумму
-            float sum_exp = 0.0f;
-            for (size_t j = 0; j < last_dim; ++j)
-            {
-                attention.data[i + j] = std::exp(attn_scores.data[i + j] - max_val);
-                sum_exp += attention.data[i + j];
-            }
-
-            // Нормализуем для получения вероятностей
-            for (size_t j = 0; j < last_dim; ++j)
-            {
-                attention.data[i + j] /= sum_exp;
-            }
-        }
-
-        values = values.matmul(attention, v);
+        values = matmul(attention, v);
     }
 
     void backward(const Tensor &grad_output, Tensor &dq, Tensor &dk, Tensor &dv)
@@ -629,7 +636,7 @@ struct ScaledDotProductAttention
         // Вычисление градиента для dv (dV = Attention^T * grad_output)
         Tensor attention_T = attention.transpose(attention.shape.size() - 2, attention.shape.size() - 1);
         attention_T.resize_grad();
-        dv = dv.matmul(attention_T, grad_output);
+        dv = matmul(attention_T, grad_output);
         dv.resize_grad();
         for (size_t i = 0; i < dv.grad.size(); ++i)
         {
@@ -639,8 +646,8 @@ struct ScaledDotProductAttention
         // Вычисление градиента для attention (dAttention = grad_output * V^T)
         Tensor v_T = saved_v.transpose(saved_v.shape.size() - 2, saved_v.shape.size() - 1);
         v_T.resize_grad();
-        Tensor dAttention = Tensor();
-        dAttention = dAttention.matmul(grad_output, v_T);
+        Tensor dAttention;
+        dAttention = matmul(grad_output, v_T);
         dAttention.resize_grad();
         for (size_t i = 0; i < dAttention.grad.size(); ++i)
         {
@@ -672,7 +679,7 @@ struct ScaledDotProductAttention
         }
 
         // Вычисление dq (dq = dScores * K)
-        dq = dq.matmul(dScores, saved_k);
+        dq = matmul(dScores, saved_k);
         dq.resize_grad();
         for (size_t i = 0; i < dq.grad.size(); ++i)
         {
@@ -687,7 +694,7 @@ struct ScaledDotProductAttention
             dScores_T.grad[i] = dScores.grad[i];
         }
 
-        dk = dk.matmul(dScores_T, saved_q);
+        dk = matmul(dScores_T, saved_q);
         dk.resize_grad();
         for (size_t i = 0; i < dk.grad.size(); ++i)
         {

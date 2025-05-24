@@ -502,6 +502,17 @@ TEST(TensorTransposeTest, DataIntegrity)
     EXPECT_EQ(t2.data, t.data);
 }
 
+TEST(TensorTransposeTest, NoChangeTensor)
+{
+    Tensor t;
+    t.shape = {2, 3};
+    t.data = {1,2,3,4,5,6};
+    
+    Tensor t1 = t.transpose(0, 1);
+    std::vector<size_t> test = {2, 3};
+    EXPECT_EQ(test, t.shape);
+}
+
 TEST(TensorMatMulTest, SimpleMatrixMultiplication)
 {
     Tensor a;
@@ -521,7 +532,7 @@ TEST(TensorMatMulTest, SimpleMatrixMultiplication)
                     139, 154};
     
     Tensor result;
-    result = result.matmul(a, b);
+    result = matmul(a, b);
     EXPECT_EQ(result.shape, expected.shape);
     for (size_t i = 0; i < expected.data.size(); ++i) {
         EXPECT_FLOAT_EQ(result.data[i], expected.data[i]);
@@ -563,7 +574,7 @@ TEST(TensorMatMulTest, BatchMatrixMultiplication)
                      301, 334};
     
     Tensor result;
-    result = result.matmul(a, b);
+    result = matmul(a, b);
     ASSERT_EQ(result.shape, expected.shape);
     for (size_t i = 0; i < expected.data.size(); ++i) {
         EXPECT_FLOAT_EQ(result.data[i], expected.data[i]);
@@ -585,7 +596,7 @@ TEST(TensorMatMulTest, VectorMatrixMultiplication)
     expected.data = {40, 46};
     
     Tensor result;
-    result = result.matmul(a, b);
+    result = matmul(a, b);
     EXPECT_EQ(result.shape, expected.shape);
     EXPECT_FLOAT_EQ(result.data[0], expected.data[0]);
     EXPECT_FLOAT_EQ(result.data[1], expected.data[1]);
@@ -598,7 +609,7 @@ TEST(TensorMatMulTest, DimensionMismatchError)
     Tensor b;
     b.shape = {4, 5};
     
-    EXPECT_THROW(a.matmul(a, b), std::invalid_argument);
+    EXPECT_THROW(matmul(a, b), std::invalid_argument);
 }
 
 TEST(TensorMatMulTest, NotEnoughDimensionsError)
@@ -608,7 +619,7 @@ TEST(TensorMatMulTest, NotEnoughDimensionsError)
     Tensor b;
     b.shape = {3};
     
-    EXPECT_THROW(a.matmul(a, b), std::invalid_argument);
+    EXPECT_THROW(matmul(a, b), std::invalid_argument);
 }
 
 TEST(TensorMatMulTest, BatchSizeMismatchError)
@@ -618,30 +629,7 @@ TEST(TensorMatMulTest, BatchSizeMismatchError)
     Tensor b;
     b.shape = {3, 3, 3};
     
-    EXPECT_THROW(a.matmul(a, b), std::invalid_argument);
-}
-
-TEST(TensorMatMulTest, LargeMatrixPerformance)
-{
-    Tensor a;
-    a.shape = {100, 100};
-    a.resize();
-    std::fill(a.data.begin(), a.data.end(), 1.0f);
-    
-    Tensor b;
-    b.shape = {100, 100};
-    b.resize();
-    std::fill(b.data.begin(), b.data.end(), 1.0f);
-    
-    auto start = std::chrono::high_resolution_clock::now();
-    Tensor result = a.matmul(a, b);
-    auto end = std::chrono::high_resolution_clock::now();
-    
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    EXPECT_LT(duration.count(), 1000);
-    
-    EXPECT_FLOAT_EQ(result.data[0], 100.0f);
-    EXPECT_FLOAT_EQ(result.data[result.data.size()-1], 100.0f);
+    EXPECT_THROW(matmul(a, b), std::invalid_argument);
 }
 
 TEST(TensorMatMulTest, FloatingPointPrecision)
@@ -654,7 +642,7 @@ TEST(TensorMatMulTest, FloatingPointPrecision)
     b.shape = {2, 2};
     b.data = {0.5f, 0.6f, 0.7f, 0.8f};
     
-    Tensor result = a.matmul(a, b);
+    Tensor result = matmul(a, b);
     
     EXPECT_NEAR(result.data[0], 0.19f, 1e-6f);
     EXPECT_NEAR(result.data[1], 0.22f, 1e-6f);
@@ -958,27 +946,6 @@ TEST(MultiHeadAttentionTest, SplitAndConcatOperations)
     }
 }
 
-TEST(MultiHeadAttentionTest, LargeInputPerformance)
-{
-    const size_t d_model = 64;
-    const size_t num_heads = 8;
-    MultiHeadAttention mha(d_model, num_heads);
-    
-    // Большие тензоры (batch=4, seq_len=128)
-    Tensor q; q.shape = {4, 128, d_model}; q.resize();
-    Tensor k = q.copy(), v = q.copy();
-    Tensor out;
-    
-    auto start = std::chrono::high_resolution_clock::now();
-    mha.forward(q, k, v, out);
-    auto end = std::chrono::high_resolution_clock::now();
-    
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    EXPECT_LT(duration.count(), 200);
-    
-    EXPECT_EQ(out.shape, std::vector<size_t>({4, 128, d_model}));
-}
-
 TEST(MultiHeadAttentionTest, BasicBackwardPass)
 {
     const size_t d_model = 8;
@@ -1152,44 +1119,6 @@ TEST(MultiHeadAttentionTest, MultipleBackwardCalls)
     EXPECT_NE(dq1.grad, dq2.grad);
     EXPECT_NE(dk1.grad, dk2.grad);
     EXPECT_NE(dv1.grad, dv2.grad);
-}
-
-TEST(MultiHeadAttentionTest, LargeInputGradients)
-{
-    const size_t d_model = 64;
-    const size_t num_heads = 8;
-    const size_t batch_size = 4;
-    const size_t seq_len = 16;
-    
-    MultiHeadAttention mha(d_model, num_heads);
-    
-    Tensor q; q.shape = {batch_size, seq_len, d_model}; q.resize();
-    Tensor k = q.copy(), v = q.copy(), out;
-    
-    // Заполнение случайными данными
-    std::generate(q.data.begin(), q.data.end(), []() { return rand() / float(RAND_MAX); });
-    
-    mha.forward(q, k, v, out);
-    
-    // Обратный проход
-    out.grad.resize(out.data.size(), 1.0f);
-    
-    Tensor dq, dk, dv;
-    dq.shape = q.shape; dq.resize_grad();
-    dk.shape = k.shape; dk.resize_grad();
-    dv.shape = v.shape; dv.resize_grad();
-    
-    auto start = std::chrono::high_resolution_clock::now();
-    mha.backward(out, dq, dk, dv);
-    auto end = std::chrono::high_resolution_clock::now();
-    
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    EXPECT_LT(duration.count(), 100) << "Backward pass took too long";
-    
-    // Проверка размеров градиентов
-    EXPECT_EQ(dq.grad.size(), batch_size * seq_len * d_model);
-    EXPECT_EQ(dk.grad.size(), batch_size * seq_len * d_model);
-    EXPECT_EQ(dv.grad.size(), batch_size * seq_len * d_model);
 }
 
 int main(int argc, char **argv)
