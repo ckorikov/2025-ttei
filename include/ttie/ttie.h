@@ -1,12 +1,15 @@
 #ifndef TTIE_H
 #define TTIE_H
 
+#include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <string>
 #include <vector>
+#include <cmath>
 
 namespace ttie {
 
@@ -677,7 +680,7 @@ struct BroadcastOp : public GradFn {
             static Tensor sqrt(const Tensor& arg) {
                 Tensor tmp;
                 tmp.impl_ = std::make_shared<TensorImpl>(*arg.impl_);
-                std::transform(tmp.impl_->data.begin(), tmp.impl_->data.end(), tmp.impl_->data.begin(), std::sqrtf);
+                std::transform(tmp.impl_->data.begin(), tmp.impl_->data.end(), tmp.impl_->data.begin(), ::sqrtf);
                 tmp.set_grad(std::make_shared<SqrtOp>(arg.impl_));
                 return tmp;
             }
@@ -685,7 +688,7 @@ struct BroadcastOp : public GradFn {
             static Tensor log(const Tensor& arg) {
                 Tensor tmp;
                 tmp.impl_ = std::make_shared<TensorImpl>(*arg.impl_);
-                std::transform(tmp.impl_->data.begin(), tmp.impl_->data.end(), tmp.impl_->data.begin(), std::logf);
+                std::transform(tmp.impl_->data.begin(), tmp.impl_->data.end(), tmp.impl_->data.begin(), ::logf);
                 tmp.set_grad(std::make_shared<LogOp>(arg.impl_));
                 return tmp;
             }
