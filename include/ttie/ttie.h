@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <numeric>
+#include <algorithm>
 
 namespace ttie
 {
@@ -216,7 +218,7 @@ struct Tensor
     }
 };
 
-static Tensor matmul(const Tensor &a, const Tensor &b)
+inline Tensor matmul(const Tensor &a, const Tensor &b)
 {
     if (a.shape.size() < 2 || b.shape.size() < 2)
     {
