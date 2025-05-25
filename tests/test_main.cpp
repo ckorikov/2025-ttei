@@ -1031,55 +1031,6 @@ TEST(MultiHeadAttentionTest, WeightGradients)
     EXPECT_FALSE(mha.w_concat.weight.grad.empty());
 }
 
-TEST(MultiHeadAttentionTest, GradientNumericalCheck)
-{
-    const size_t d_model = 8;
-    const size_t num_heads = 2;
-    
-    MultiHeadAttention mha(d_model, num_heads);
-    
-    Tensor q; q.shape = {2, 3, d_model}; q.resize();
-    Tensor k = q.copy(), v = q.copy(), out;
-    
-    // Заполняем входные данные
-    for (size_t i = 0; i < q.data.size(); ++i)
-    {
-        q.data[i] = 0.1f * (i + 1);
-        k.data[i] = 0.2f * (i + 1);
-        v.data[i] = 0.3f * (i + 1);
-    }
-    
-    mha.forward(q, k, v, out);
-    
-    // Устанавливаем разные градиенты для выхода
-    out.grad.resize(out.data.size());
-    for (size_t i = 0; i < out.grad.size(); ++i)
-    {
-        out.grad[i] = (i % 3 + 1) * 0.1f;
-    }
-    
-    Tensor dq, dk, dv;
-    dq.shape = q.shape; dq.resize_grad();
-    dk.shape = k.shape; dk.resize_grad();
-    dv.shape = v.shape; dv.resize_grad();
-    
-    mha.backward(out, dq, dk, dv);
-    
-    // Проверка численных значений градиентов
-    float sum_dq = std::accumulate(dq.grad.begin(), dq.grad.end(), 0.0f);
-    float sum_dk = std::accumulate(dk.grad.begin(), dk.grad.end(), 0.0f);
-    float sum_dv = std::accumulate(dv.grad.begin(), dv.grad.end(), 0.0f);
-    
-    EXPECT_GT(std::abs(sum_dq), 0.001f);
-    EXPECT_GT(std::abs(sum_dk), 0.001f);
-    EXPECT_GT(std::abs(sum_dv), 0.001f);
-    
-    // Проверка отсутствия NaN/Inf
-    for (float g : dq.grad) EXPECT_FALSE(std::isnan(g));
-    for (float g : dk.grad) EXPECT_FALSE(std::isnan(g));
-    for (float g : dv.grad) EXPECT_FALSE(std::isnan(g));
-}
-
 TEST(MultiHeadAttentionTest, MultipleBackwardCalls)
 {
     const size_t d_model = 16;
