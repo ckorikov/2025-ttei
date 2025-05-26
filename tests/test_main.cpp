@@ -1,5 +1,7 @@
 #include "ttie/ttie.h"
 #include <gtest/gtest.h>
+#include <random>
+#include <cmath>
 
 using namespace ttie;
 
@@ -1071,6 +1073,556 @@ TEST(MultiHeadAttentionTest, MultipleBackwardCalls)
     EXPECT_NE(dk1.grad, dk2.grad);
     EXPECT_NE(dv1.grad, dv2.grad);
 }
+
+
+#include "ttie/ttie.h"
+#include <gtest/gtest.h>
+#include <random>
+#include <cmath>
+
+// Вспомогательная функция для вычисления MSE Loss
+float compute_mse_loss(const Tensor& output, const Tensor& target) {
+    if (output.data.size() != target.data.size()) {
+        throw std::invalid_argument("Output and target sizes do not match");
+    }
+    float sum_sq_diff = 0.0f;
+    for (size_t i = 0; i < output.data.size(); ++i) {
+        float diff = output.data[i] - target.data[i];
+        sum_sq_diff += diff * diff;
+    }
+    return sum_sq_diff / output.data.size();
+}
+
+// Вспомогательная функция для обновления параметров (градиентный спуск)
+void update_parameters(const std::vector<Tensor*>& params, float learning_rate) {
+    for (Tensor* param : params) {
+        if (!param->grad.empty()) {
+            for (size_t i = 0; i < param->data.size(); ++i) {
+                param->data[i] -= learning_rate * param->grad[i];
+            }
+        }
+    }
+}
+
+// Тесты для BatchNorm1d
+TEST(BatchNorm1dTest, Initialization) {
+    BatchNorm1d bn(64, 1e-5, 0.1, true, true);
+    EXPECT_EQ(bn.to_string(), "BatchNorm1d(64)");
+    EXPECT_EQ(bn.parameters().size(), 2); // gamma и beta
+    EXPECT_EQ(bn.parameters()[0]->shape, std::vector<size_t>{64}); // gamma
+    EXPECT_EQ(bn.parameters()[1]->shape, std::vector<size_t>{64}); // beta
+    EXPECT_FALSE(bn.parameters()[0]->data.empty());
+    EXPECT_FALSE(bn.parameters()[1]->data.empty());
+}
+
+TEST(BatchNorm1dTest, ForwardValidInput) {
+    BatchNorm1d bn(2, 1e-5, 0.1, true, true);
+    Tensor input;
+    input.shape = {4, 2}; // [batch_size, num_features]
+    input.resize();
+    input.data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+    Tensor output;
+    bn.forward(input, output);
+    EXPECT_EQ(output.shape, (std::vector<size_t>{4, 2}));
+
+    // Проверяем параметры gamma и beta
+    std::cout << "BatchNorm1d gamma: ";
+    for (float g : bn.parameters()[0]->data) std::cout << g << " ";
+    std::cout << "\nBatchNorm1d beta: ";
+    for (float b : bn.parameters()[1]->data) std::cout << b << " ";
+    std::cout << "\n";
+
+    // Проверяем нормализацию по батчу для каждого канала
+    size_t batch_size = input.shape[0];
+    size_t num_features = input.shape[1];
+    for (size_t f = 0; f < num_features; ++f) {
+        // Вычисляем среднее и дисперсию по батчу для канала f
+        float mean = 0.0f;
+        for (size_t b = 0; b < batch_size; ++b) {
+            mean += input.data[b * num_features + f];
+        }
+        mean /= batch_size;
+
+        float var = 0.0f;
+        for (size_t b = 0; b < batch_size; ++b) {
+            float diff = input.data[b * num_features + f] - mean;
+            var += diff * diff;
+        }
+        var /= batch_size;
+
+        float inv_std = 1.0f / std::sqrt(var + 1e-5f);
+        float gamma = bn.parameters()[0]->data[f];
+        float beta = bn.parameters()[1]->data[f];
+
+        // Проверяем, что выход соответствует нормализации
+        for (size_t b = 0; b < batch_size; ++b) {
+            float x = input.data[b * num_features + f];
+            float x_hat = (x - mean) * inv_std;
+            float expected_output = gamma * x_hat + beta;
+            float actual_output = output.data[b * num_features + f];
+            EXPECT_NEAR(actual_output, expected_output, 1e-5f);
+        }
+    }
+}
+
+TEST(BatchNorm1dTest, ForwardInvalidInputShape) {
+    BatchNorm1d bn(2);
+    Tensor input;
+    input.shape = {4, 3}; // неправильное число каналов
+    input.resize();
+    Tensor output;
+    EXPECT_THROW(bn.forward(input, output), std::invalid_argument);
+}
+
+TEST(BatchNorm1dTest, BackwardValidInput) {
+    BatchNorm1d bn(2, 1e-5, 0.1, true, true);
+    Tensor input;
+    input.shape = {4, 2};
+    input.resize();
+    input.data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+    Tensor output;
+    bn.forward(input, output);
+    Tensor grad_output;
+    grad_output.shape = {4, 2};
+    grad_output.resize();
+    grad_output.resize_grad();
+    grad_output.grad = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    Tensor grad_input;
+    bn.backward(grad_output, grad_input);
+    EXPECT_EQ(grad_input.shape, (std::vector<size_t>{4, 2}));
+    EXPECT_FALSE(grad_input.grad.empty());
+    EXPECT_FALSE(bn.parameters()[0]->grad.empty());
+    EXPECT_FALSE(bn.parameters()[1]->grad.empty());
+}
+
+TEST(BatchNorm1dTest, BackwardWithoutForward) {
+    BatchNorm1d bn(2);
+    Tensor grad_output;
+    grad_output.shape = {4, 2};
+    grad_output.resize();
+    grad_output.resize_grad();
+    grad_output.grad = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    Tensor grad_input;
+    EXPECT_THROW(bn.backward(grad_output, grad_input), std::runtime_error);
+}
+
+
+TEST(BatchNorm1dTest, BackwardGradientDescent) {
+    BatchNorm1d bn(2, 1e-5, 0.1, true, true);
+    Tensor input;
+    input.shape = {4, 2};
+    input.resize();
+    input.data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+    input.resize_grad();
+
+    // Целевой тензор (target)
+    Tensor target;
+    target.shape = {4, 2};
+    target.resize();
+    target.data = {0.5f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
+
+    float learning_rate = 0.01f;
+    int num_iterations = 10;
+    float initial_loss = 0.0f;
+
+    // Выполняем градиентный спуск
+    for (int iter = 0; iter < num_iterations; ++iter) {
+        Tensor output;
+        bn.forward(input, output);
+        float loss = compute_mse_loss(output, target);
+        if (iter == 0) {
+            initial_loss = loss;
+        }
+
+        Tensor grad_output;
+        grad_output.shape = output.shape;
+        grad_output.resize();
+        grad_output.resize_grad();
+        for (size_t i = 0; i < output.data.size(); ++i) {
+            grad_output.grad[i] = 2.0f * (output.data[i] - target.data[i]) / output.data.size();
+        }
+
+        Tensor grad_input;
+        bn.backward(grad_output, grad_input);
+
+        // Обновляем параметры
+        update_parameters(bn.parameters(), learning_rate);
+
+        // Очищаем градиенты
+        for (Tensor* param : bn.parameters()) {
+            std::fill(param->grad.begin(), param->grad.end(), 0.0f);
+        }
+    }
+
+    // Проверяем, что лосс уменьшился
+    Tensor final_output;
+    bn.forward(input, final_output);
+    float final_loss = compute_mse_loss(final_output, target);
+    EXPECT_LT(final_loss, initial_loss);
+}
+
+
+// Тесты для BatchNorm2d
+TEST(BatchNorm2dTest, Initialization) {
+    BatchNorm2d bn(32, 1e-5, 0.1, true, true);
+    EXPECT_EQ(bn.to_string(), "BatchNorm2d(32)");
+    EXPECT_EQ(bn.parameters().size(), 2); // gamma и beta
+    EXPECT_EQ(bn.parameters()[0]->shape, std::vector<size_t>{32}); // gamma
+    EXPECT_EQ(bn.parameters()[1]->shape, std::vector<size_t>{32}); // beta
+    EXPECT_FALSE(bn.parameters()[0]->data.empty());
+    EXPECT_FALSE(bn.parameters()[1]->data.empty());
+}
+
+TEST(BatchNorm2dTest, ForwardValidInput) {
+    BatchNorm2d bn(2, 1e-5, 0.1, true, true);
+    Tensor input;
+    input.shape = {2, 2, 3, 3}; // [N, C, H, W]
+    input.resize();
+    for (size_t i = 0; i < input.size(); ++i) {
+        input.data[i] = static_cast<float>(i % 5 + 1);
+    }
+    Tensor output;
+    bn.forward(input, output);
+    EXPECT_EQ(output.shape, (std::vector<size_t>{2, 2, 3, 3}));
+
+    // Проверяем параметры gamma и beta
+    std::cout << "BatchNorm2d gamma: ";
+    for (float g : bn.parameters()[0]->data) std::cout << g << " ";
+    std::cout << "\nBatchNorm2d beta: ";
+    for (float b : bn.parameters()[1]->data) std::cout << b << " ";
+    std::cout << "\n";
+
+    // Проверяем нормализацию по батчу для каждого канала
+    size_t N = input.shape[0];
+    size_t C = input.shape[1];
+    size_t H = input.shape[2];
+    size_t W = input.shape[3];
+    size_t count = N * H * W;
+
+    for (size_t c = 0; c < C; ++c) {
+        float mean = 0.0f;
+        for (size_t n = 0; n < N; ++n) {
+            for (size_t h = 0; h < H; ++h) {
+                for (size_t w = 0; w < W; ++w) {
+                    size_t idx = n * C * H * W + c * H * W + h * W + w;
+                    mean += input.data[idx];
+                }
+            }
+        }
+        mean /= count;
+
+        float var = 0.0f;
+        for (size_t n = 0; n < N; ++n) {
+            for (size_t h = 0; h < H; ++h) {
+                for (size_t w = 0; w < W; ++w) {
+                    size_t idx = n * C * H * W + c * H * W + h * W + w;
+                    float diff = input.data[idx] - mean;
+                    var += diff * diff;
+                }
+            }
+        }
+        var /= count;
+
+        float inv_std = 1.0f / std::sqrt(var + 1e-5f);
+        float gamma = bn.parameters()[0]->data[c];
+        float beta = bn.parameters()[1]->data[c];
+
+        for (size_t n = 0; n < N; ++n) {
+            for (size_t h = 0; h < H; ++h) {
+                for (size_t w = 0; w < W; ++w) {
+                    size_t idx = n * C * H * W + c * H * W + h * W + w;
+                    float x = input.data[idx];
+                    float x_hat = (x - mean) * inv_std;
+                    float expected_output = gamma * x_hat + beta;
+                    float actual_output = output.data[idx];
+                    EXPECT_NEAR(actual_output, expected_output, 1e-5f);
+                }
+            }
+        }
+    }
+}
+
+TEST(BatchNorm2dTest, ForwardInvalidInputShape) {
+    BatchNorm2d bn(2);
+    Tensor input;
+    input.shape = {2, 3, 3, 3}; // неправильное число каналов
+    input.resize();
+    Tensor output;
+    EXPECT_THROW(bn.forward(input, output), std::invalid_argument);
+}
+
+TEST(BatchNorm2dTest, BackwardValidInput) {
+    BatchNorm2d bn(2, 1e-5, 0.1, true, true);
+    Tensor input;
+    input.shape = {2, 2, 3, 3};
+    input.resize();
+    input.data = std::vector<float>(input.size(), 1.0f);
+    Tensor output;
+    bn.forward(input, output);
+    Tensor grad_output;
+    grad_output.shape = {2, 2, 3, 3};
+    grad_output.resize();
+    grad_output.resize_grad();
+    grad_output.grad = std::vector<float>(grad_output.size(), 1.0f);
+    Tensor grad_input;
+    bn.backward(grad_output, grad_input);
+    EXPECT_EQ(grad_input.shape, (std::vector<size_t>{2, 2, 3, 3}));
+    EXPECT_FALSE(grad_input.grad.empty());
+    EXPECT_FALSE(bn.parameters()[0]->grad.empty());
+    EXPECT_FALSE(bn.parameters()[1]->grad.empty());
+}
+
+TEST(BatchNorm2dTest, BackwardInvalidGradOutput) {
+    BatchNorm2d bn(2);
+    Tensor input;
+    input.shape = {2, 2, 3, 3};
+    input.resize();
+    input.data = std::vector<float>(input.size(), 1.0f);
+    Tensor output;
+    bn.forward(input, output);
+    Tensor grad_output;
+    grad_output.shape = {2, 3, 3, 3}; // неправильное число каналов
+    grad_output.resize();
+    grad_output.resize_grad();
+    Tensor grad_input;
+    EXPECT_THROW(bn.backward(grad_output, grad_input), std::invalid_argument);
+}
+
+
+TEST(BatchNorm2dTest, BackwardGradientDescent) {
+    BatchNorm2d bn(2, 1e-5, 0.1, true, true);
+    Tensor input;
+    input.shape = {2, 2, 3, 3};
+    input.resize();
+    input.data = std::vector<float>(input.size(), 1.0f);
+    input.resize_grad();
+
+    // Целевой тензор
+    Tensor target;
+    target.shape = {2, 2, 3, 3};
+    target.resize();
+    target.data = std::vector<float>(target.size(), 0.5f);
+
+    float learning_rate = 0.01f;
+    int num_iterations = 10;
+    float initial_loss = 0.0f;
+
+    for (int iter = 0; iter < num_iterations; ++iter) {
+        Tensor output;
+        bn.forward(input, output);
+        float loss = compute_mse_loss(output, target);
+        if (iter == 0) {
+            initial_loss = loss;
+        }
+
+        Tensor grad_output;
+        grad_output.shape = output.shape;
+        grad_output.resize();
+        grad_output.resize_grad();
+        for (size_t i = 0; i < output.data.size(); ++i) {
+            grad_output.grad[i] = 2.0f * (output.data[i] - target.data[i]) / output.data.size();
+        }
+
+        Tensor grad_input;
+        bn.backward(grad_output, grad_input);
+
+        update_parameters(bn.parameters(), learning_rate);
+
+        for (Tensor* param : bn.parameters()) {
+            std::fill(param->grad.begin(), param->grad.end(), 0.0f);
+        }
+    }
+
+    Tensor final_output;
+    bn.forward(input, final_output);
+    float final_loss = compute_mse_loss(final_output, target);
+    EXPECT_LT(final_loss, initial_loss);
+}
+
+// Тесты для BatchNorm3d
+TEST(BatchNorm3dTest, Initialization) {
+    BatchNorm3d bn(16, 1e-5, 0.1, true, true);
+    EXPECT_EQ(bn.to_string(), "BatchNorm3d(16)");
+    EXPECT_EQ(bn.parameters().size(), 2); // gamma и beta
+    EXPECT_EQ(bn.parameters()[0]->shape, std::vector<size_t>{16}); // gamma
+    EXPECT_EQ(bn.parameters()[1]->shape, std::vector<size_t>{16}); // beta
+    EXPECT_FALSE(bn.parameters()[0]->data.empty());
+    EXPECT_FALSE(bn.parameters()[1]->data.empty());
+}
+
+TEST(BatchNorm3dTest, ForwardValidInput) {
+    BatchNorm3d bn(2, 1e-5, 0.1, true, true);
+    Tensor input;
+    input.shape = {2, 2, 3, 3, 3}; // [N, C, D, H, W]
+    input.resize();
+    for (size_t i = 0; i < input.size(); ++i) {
+        input.data[i] = static_cast<float>(i % 5 + 1);
+    }
+    Tensor output;
+    bn.forward(input, output);
+    EXPECT_EQ(output.shape, (std::vector<size_t>{2, 2, 3, 3, 3}));
+
+    // Проверяем параметры gamma и beta
+    std::cout << "BatchNorm3d gamma: ";
+    for (float g : bn.parameters()[0]->data) std::cout << g << " ";
+    std::cout << "\nBatchNorm3d beta: ";
+    for (float b : bn.parameters()[1]->data) std::cout << b << " ";
+    std::cout << "\n";
+
+    // Проверяем нормализацию по батчу для каждого канала
+    size_t N = input.shape[0];
+    size_t C = input.shape[1];
+    size_t D = input.shape[2];
+    size_t H = input.shape[3];
+    size_t W = input.shape[4];
+    size_t count = N * D * H * W;
+
+    for (size_t c = 0; c < C; ++c) {
+        float mean = 0.0f;
+        for (size_t n = 0; n < N; ++n) {
+            for (size_t d = 0; d < D; ++d) {
+                for (size_t h = 0; h < H; ++h) {
+                    for (size_t w = 0; w < W; ++w) {
+                        size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+                        mean += input.data[idx];
+                    }
+                }
+            }
+        }
+        mean /= count;
+
+        float var = 0.0f;
+        for (size_t n = 0; n < N; ++n) {
+            for (size_t d = 0; d < D; ++d) {
+                for (size_t h = 0; h < H; ++h) {
+                    for (size_t w = 0; w < W; ++w) {
+                        size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+                        float diff = input.data[idx] - mean;
+                        var += diff * diff;
+                    }
+                }
+            }
+        }
+        var /= count;
+
+        float inv_std = 1.0f / std::sqrt(var + 1e-5f);
+        float gamma = bn.parameters()[0]->data[c];
+        float beta = bn.parameters()[1]->data[c];
+
+        for (size_t n = 0; n < N; ++n) {
+            for (size_t d = 0; d < D; ++d) {
+                for (size_t h = 0; h < H; ++h) {
+                    for (size_t w = 0; w < W; ++w) {
+                        size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+                        float x = input.data[idx];
+                        float x_hat = (x - mean) * inv_std;
+                        float expected_output = gamma * x_hat + beta;
+                        float actual_output = output.data[idx];
+                        EXPECT_NEAR(actual_output, expected_output, 1e-5f);
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+TEST(BatchNorm3dTest, ForwardInvalidInputShape) {
+    BatchNorm3d bn(2);
+    Tensor input;
+    input.shape = {2, 3, 3, 3, 3}; // неправильное число каналов
+    input.resize();
+    Tensor output;
+    EXPECT_THROW(bn.forward(input, output), std::invalid_argument);
+}
+
+TEST(BatchNorm3dTest, BackwardValidInput) {
+    BatchNorm3d bn(2, 1e-5, 0.1, true, true);
+    Tensor input;
+    input.shape = {2, 2, 3, 3, 3};
+    input.resize();
+    input.data = std::vector<float>(input.size(), 1.0f);
+    Tensor output;
+    bn.forward(input, output);
+    Tensor grad_output;
+    grad_output.shape = {2, 2, 3, 3, 3};
+    grad_output.resize();
+    grad_output.resize_grad();
+    grad_output.grad = std::vector<float>(grad_output.size(), 1.0f);
+    Tensor grad_input;
+    bn.backward(grad_output, grad_input);
+    EXPECT_EQ(grad_input.shape, (std::vector<size_t>{2, 2, 3, 3, 3}));
+    EXPECT_FALSE(grad_input.grad.empty());
+    EXPECT_FALSE(bn.parameters()[0]->grad.empty());
+    EXPECT_FALSE(bn.parameters()[1]->grad.empty());
+}
+
+TEST(BatchNorm3dTest, BackwardWithoutForward) {
+    BatchNorm3d bn(2);
+    Tensor grad_output;
+    grad_output.shape = {2, 2, 3, 3, 3};
+    grad_output.resize();
+    grad_output.resize_grad();
+    grad_output.grad = std::vector<float>(grad_output.size(), 1.0f);
+    Tensor grad_input;
+    EXPECT_THROW(bn.backward(grad_output, grad_input), std::runtime_error);
+}
+
+
+
+TEST(BatchNorm3dTest, BackwardGradientDescent) {
+    BatchNorm3d bn(2, 1e-5, 0.1, true, true);
+    Tensor input;
+    input.shape = {2, 2, 3, 3, 3};
+    input.resize();
+    input.data = std::vector<float>(input.size(), 1.0f);
+    input.resize_grad();
+
+    // Целевой тензор
+    Tensor target;
+    target.shape = {2, 2, 3, 3, 3};
+    target.resize();
+    target.data = std::vector<float>(target.size(), 0.5f);
+
+    float learning_rate = 0.01f;
+    int num_iterations = 10;
+    float initial_loss = 0.0f;
+
+    for (int iter = 0; iter < num_iterations; ++iter) {
+        Tensor output;
+        bn.forward(input, output);
+        float loss = compute_mse_loss(output, target);
+        if (iter == 0) {
+            initial_loss = loss;
+        }
+
+        Tensor grad_output;
+        grad_output.shape = output.shape;
+        grad_output.resize();
+        grad_output.resize_grad();
+        for (size_t i = 0; i < output.data.size(); ++i) {
+            grad_output.grad[i] = 2.0f * (output.data[i] - target.data[i]) / output.data.size();
+        }
+
+        Tensor grad_input;
+        bn.backward(grad_output, grad_input);
+
+        update_parameters(bn.parameters(), learning_rate);
+
+        for (Tensor* param : bn.parameters()) {
+            std::fill(param->grad.begin(), param->grad.end(), 0.0f);
+        }
+    }
+
+    Tensor final_output;
+    bn.forward(input, final_output);
+    float final_loss = compute_mse_loss(final_output, target);
+    EXPECT_LT(final_loss, initial_loss);
+}
+
+
+
+
 
 int main(int argc, char **argv)
 {
