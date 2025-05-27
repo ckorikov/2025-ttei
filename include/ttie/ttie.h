@@ -911,6 +911,696 @@ Tensor mse_loss(const Tensor &pred, const Tensor &target)
     return loss;
 }
 
+class BatchNorm1d : public Layer {
+private:
+    size_t num_features;
+    float eps;
+    float momentum;
+    bool affine;
+    bool track_running_stats;
+
+    Tensor gamma; 
+    Tensor beta; 
+    Tensor running_mean;
+    Tensor running_var;
+
+    std::vector<float> input_data; // сохраняем входные данные для backward
+    bool first_update = true;
+
+public:
+    BatchNorm1d(size_t num_features,
+                float eps = 1e-5,
+                float momentum = 0.1,
+                bool affine = true,
+                bool track_running_stats = true)
+        : num_features(num_features),
+            eps(eps),
+            momentum(momentum),
+            affine(affine),
+            track_running_stats(track_running_stats) {
+
+        if (affine) {
+            gamma.shape = {num_features};
+            gamma.resize();
+            gamma.resize_grad();
+            beta.shape = {num_features};
+            beta.resize();
+            beta.resize_grad();
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::uniform_real_distribution<float> dis(0.9f, 1.1f);
+            for (size_t i = 0; i < num_features; ++i) {
+                gamma.data[i] = dis(gen);
+                beta.data[i] = 0.0f;
+            }
+        }
+
+        if (track_running_stats) {
+            running_mean.shape = {num_features};
+            running_mean.resize();
+            running_var.shape = {num_features};
+            running_var.resize();
+        }
+    }
+
+    void forward(const Tensor &input, Tensor &output) override {
+        if (input.shape.size() != 2 || input.shape[1] != num_features) {
+            throw std::invalid_argument("Входной тензор должен быть [batch_size, num_features]");
+        }
+
+        size_t batch_size = input.shape[0];
+        output.shape = {batch_size, num_features};
+        output.resize();
+
+        input_data = input.data;
+
+        for (size_t f = 0; f < num_features; ++f) {
+            float mean = 0.0f, var = 0.0f;
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                mean += input.data[b * num_features + f];
+            }
+            mean /= batch_size;
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                float diff = input.data[b * num_features + f] - mean;
+                var += diff * diff;
+            }
+            var /= batch_size;
+
+            if (track_running_stats) {
+                if (first_update) {
+                    running_mean.data[f] = mean;
+                    running_var.data[f] = var;
+                } else {
+                    running_mean.data[f] = (1 - momentum) * running_mean.data[f] + momentum * mean;
+                    running_var.data[f] = (1 - momentum) * running_var.data[f] + momentum * var;
+                }
+            }
+
+            float inv_std = 1.0f / std::sqrt(var + eps);
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                float x_hat = (input.data[b * num_features + f] - mean) * inv_std;
+                output.data[b * num_features + f] = affine ? gamma.data[f] * x_hat + beta.data[f] : x_hat;
+            }
+        }
+
+        first_update = false;
+    }
+
+    void backward(const Tensor &grad_output, Tensor &grad_input) override {
+        if (grad_output.shape.size() != 2 || grad_output.shape[1] != num_features) {
+            throw std::invalid_argument("grad_output должен быть [batch_size, num_features]");
+        }
+        if (grad_output.grad.empty()) {
+            throw std::runtime_error("grad_output.grad пустой");
+        }
+        if (input_data.empty()) {
+            throw std::runtime_error("input_data пустой. Сначала вызовите forward()");
+        }
+        if (input_data.size() != grad_output.shape[0] * num_features) {
+            throw std::runtime_error("Размер input_data не соответствует ожидаемому");
+        }
+    
+        size_t batch_size = grad_output.shape[0];
+        grad_input.shape = {batch_size, num_features};
+        grad_input.resize();
+        grad_input.resize_grad();
+    
+        const size_t count = batch_size; // Перемещено и помечено как const
+        for (size_t f = 0; f < num_features; ++f) {
+            float mean = 0.0f, var = 0.0f;
+    
+            for (size_t b = 0; b < batch_size; ++b) {
+                mean += input_data[b * num_features + f];
+            }
+            mean /= count;
+    
+            for (size_t b = 0; b < batch_size; ++b) {
+                float diff = input_data[b * num_features + f] - mean;
+                var += diff * diff;
+            }
+            var /= count;
+    
+            float inv_std = 1.0f / std::sqrt(var + eps);
+    
+            std::vector<float> x_hat(count);
+            for (size_t b = 0; b < batch_size; ++b) {
+                x_hat[b] = (input_data[b * num_features + f] - mean) * inv_std;
+            }
+    
+            float sum_dy = 0.0f, sum_dy_x_hat = 0.0f;
+            for (size_t b = 0; b < batch_size; ++b) {
+                float dy = grad_output.grad[b * num_features + f];
+                sum_dy += dy;
+                sum_dy_x_hat += dy * x_hat[b];
+            }
+    
+            float factor = static_cast<float>(count);
+            float gamma_val = affine ? gamma.data[f] : 1.0f;
+    
+            for (size_t b = 0; b < batch_size; ++b) {
+                float dy = grad_output.grad[b * num_features + f];
+                float dx_hat = dy;
+                float term1 = dx_hat * inv_std * gamma_val;
+                float term2 = inv_std * sum_dy / factor * gamma_val;
+                float term3 = inv_std * x_hat[b] * sum_dy_x_hat / factor * gamma_val;
+    
+                grad_input.grad[b * num_features + f] = term1 - term2 - term3;
+    
+                if (affine) {
+                    beta.grad[f] += dy;
+                    gamma.grad[f] += dy * x_hat[b];
+                }
+            }
+        }
+    }
+
+    std::string to_string() const override {
+        std::stringstream ss;
+        ss << "BatchNorm1d(" << num_features << ")";
+        return ss.str();
+    }
+
+    std::vector<Tensor *> parameters() override {
+        if (affine) {
+            return {&gamma, &beta};
+        }
+        return {};
+    }
+};
+
+class BatchNorm2d : public Layer {
+private:
+    size_t num_features;
+    float eps;
+    float momentum;
+    bool affine;
+    bool track_running_stats;
+
+    Tensor gamma;
+    Tensor beta;
+    Tensor running_mean;
+    Tensor running_var;
+
+    std::vector<float> input_data;
+    bool first_update = true;
+
+public:
+    BatchNorm2d(size_t num_features,
+                float eps = 1e-5,
+                float momentum = 0.1,
+                bool affine = true,
+                bool track_running_stats = true)
+        : num_features(num_features),
+            eps(eps),
+            momentum(momentum),
+            affine(affine),
+            track_running_stats(track_running_stats) {
+
+        if (affine) {
+            gamma.shape = {num_features};
+            gamma.resize();
+            gamma.resize_grad();
+            beta.shape = {num_features};
+            beta.resize();
+            beta.resize_grad();
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::uniform_real_distribution<float> dis(0.9f, 1.1f);
+            for (size_t i = 0; i < num_features; ++i) {
+                gamma.data[i] = dis(gen);
+                beta.data[i] = 0.0f;
+            }
+        }
+
+        if (track_running_stats) {
+            running_mean.shape = {num_features};
+            running_mean.resize();
+            running_var.shape = {num_features};
+            running_var.resize();
+        }
+    }
+
+    void forward(const Tensor &input, Tensor &output) override {
+        if (input.shape.size() != 4) {
+            throw std::invalid_argument("Входной тензор должен быть [N, C, H, W]");
+        }
+        if (input.shape[1] != num_features) {
+            throw std::invalid_argument("Количество каналов должно соответствовать num_features");
+        }
+        if (input.data.size() != input.size()) {
+            throw std::runtime_error("Размер входных данных не соответствует shape");
+        }
+    
+        size_t N = input.shape[0];
+        size_t C = input.shape[1];
+        size_t H = input.shape[2];
+        size_t W = input.shape[3];
+    
+        output.shape = {N, C, H, W};
+        output.resize();
+    
+        input_data = input.data;
+    
+        for (size_t c = 0; c < C; ++c) {
+            float mean = 0.0f, var = 0.0f;
+            size_t count = N * H * W;
+    
+            // Вычисление среднего
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t h = 0; h < H; ++h) {
+                    for (size_t w = 0; w < W; ++w) {
+                        size_t idx = n * C * H * W + c * H * W + h * W + w;
+                        mean += input.data[idx];
+                    }
+                }
+            }
+            mean /= count;
+    
+            // Вычисление дисперсии
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t h = 0; h < H; ++h) {
+                    for (size_t w = 0; w < W; ++w) {
+                        size_t idx = n * C * H * W + c * H * W + h * W + w;
+                        float diff = input.data[idx] - mean;
+                        var += diff * diff;
+                    }
+                }
+            }
+            var /= count;
+    
+            // Обновление running_mean и running_var
+            if (track_running_stats) {
+                if (first_update) {
+                    running_mean.data[c] = mean;
+                    running_var.data[c] = var;
+                } else {
+                    running_mean.data[c] = (1 - momentum) * running_mean.data[c] + momentum * mean;
+                    running_var.data[c] = (1 - momentum) * running_var.data[c] + momentum * var;
+                }
+            }
+    
+            float inv_std = 1.0f / std::sqrt(var + eps);
+    
+            // Вычисление выхода с учетом affine за пределами вложенных циклов
+            if (affine) {
+                for (size_t n = 0; n < N; ++n) {
+                    for (size_t h = 0; h < H; ++h) {
+                        for (size_t w = 0; w < W; ++w) {
+                            size_t idx = n * C * H * W + c * H * W + h * W + w;
+                            float x_hat = (input.data[idx] - mean) * inv_std;
+                            output.data[idx] = gamma.data[c] * x_hat + beta.data[c];
+                        }
+                    }
+                }
+            } else {
+                for (size_t n = 0; n < N; ++n) {
+                    for (size_t h = 0; h < H; ++h) {
+                        for (size_t w = 0; w < W; ++w) {
+                            size_t idx = n * C * H * W + c * H * W + h * W + w;
+                            float x_hat = (input.data[idx] - mean) * inv_std;
+                            output.data[idx] = x_hat;
+                        }
+                    }
+                }
+            }
+        }
+    
+        first_update = false;
+    }
+
+    void backward(const Tensor &grad_output, Tensor &grad_input) override {
+        if (input_data.empty()) {
+            throw std::runtime_error("input_data пустой. Сначала вызовите forward()");
+        }
+        if (grad_output.shape.size() != 4 || grad_output.shape[1] != num_features) {
+            throw std::invalid_argument("grad_output должен быть [N, C, H, W]");
+        }
+        if (grad_output.grad.empty()) {
+            throw std::runtime_error("grad_output.grad пустой");
+        }
+        if (input_data.size() != grad_output.shape[0] * num_features * grad_output.shape[2] * grad_output.shape[3]) {
+            throw std::runtime_error("Размер input_data не соответствует ожидаемому");
+        }
+        if (affine && (gamma.grad.size() != num_features || beta.grad.size() != num_features)) {
+            throw std::runtime_error("Градиенты gamma или beta имеют неправильный размер");
+        }
+    
+        size_t N = grad_output.shape[0];
+        size_t C = grad_output.shape[1];
+        size_t H = grad_output.shape[2];
+        size_t W = grad_output.shape[3];
+    
+        grad_input.shape = {N, C, H, W};
+        grad_input.resize();
+        grad_input.resize_grad();
+    
+        const size_t count = N * H * W; 
+        for (size_t c = 0; c < C; ++c) {
+            float mean = 0.0f, var = 0.0f;
+    
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t h = 0; h < H; ++h) {
+                    for (size_t w = 0; w < W; ++w) {
+                        size_t idx = n * C * H * W + c * H * W + h * W + w;
+                        mean += input_data[idx];
+                    }
+                }
+            }
+            mean /= count;
+    
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t h = 0; h < H; ++h) {
+                    for (size_t w = 0; w < W; ++w) {
+                        size_t idx = n * C * H * W + c * H * W + h * W + w;
+                        float diff = input_data[idx] - mean;
+                        var += diff * diff;
+                    }
+                }
+            }
+            var /= count;
+    
+            float inv_std = 1.0f / std::sqrt(var + eps);
+            float gamma_val = affine ? gamma.data[c] : 1.0f;
+    
+            float sum_dy = 0.0f, sum_dy_x_hat = 0.0f;
+            std::vector<float> x_hat(count);
+            size_t pos = 0;
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t h = 0; h < H; ++h) {
+                    for (size_t w = 0; w < W; ++w) {
+                        size_t idx = n * C * H * W + c * H * W + h * W + w;
+                        x_hat[pos] = (input_data[idx] - mean) * inv_std;
+                        sum_dy += grad_output.grad[idx];
+                        sum_dy_x_hat += grad_output.grad[idx] * x_hat[pos];
+                        pos++;
+                    }
+                }
+            }
+    
+            pos = 0;
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t h = 0; h < H; ++h) {
+                    for (size_t w = 0; w < W; ++w) {
+                        size_t idx = n * C * H * W + c * H * W + h * W + w;
+                        float dy = grad_output.grad[idx];
+                        float dx_hat = dy;
+                        float term1 = dx_hat * inv_std * gamma_val;
+                        float term2 = inv_std * sum_dy / count * gamma_val;
+                        float term3 = inv_std * x_hat[pos] * sum_dy_x_hat / count * gamma_val;
+                        grad_input.grad[idx] = term1 - term2 - term3;
+    
+                        if (affine) {
+                            beta.grad[c] += dy;
+                            gamma.grad[c] += dy * x_hat[pos];
+                        }
+                        pos++;
+                    }
+                }
+            }
+        }
+    }
+
+    std::string to_string() const override {
+        std::stringstream ss;
+        ss << "BatchNorm2d(" << num_features << ")";
+        return ss.str();
+    }
+
+    std::vector<Tensor *> parameters() override {
+        if (affine) {
+            return {&gamma, &beta};
+        }
+        return {};
+    }
+};
+
+class BatchNorm3d : public Layer {
+private:
+    size_t num_features;
+    float eps;
+    float momentum;
+    bool affine;
+    bool track_running_stats;
+
+    Tensor gamma;
+    Tensor beta;
+    Tensor running_mean;
+    Tensor running_var;
+
+    std::vector<float> input_data;
+    bool first_update = true;
+
+public:
+    BatchNorm3d(size_t num_features,
+                float eps = 1e-5,
+                float momentum = 0.1,
+                bool affine = true,
+                bool track_running_stats = true)
+        : num_features(num_features),
+            eps(eps),
+            momentum(momentum),
+            affine(affine),
+            track_running_stats(track_running_stats) {
+
+        if (affine) {
+            gamma.shape = {num_features};
+            gamma.resize();
+            gamma.resize_grad();
+            beta.shape = {num_features};
+            beta.resize();
+            beta.resize_grad();
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::uniform_real_distribution<float> dis(0.9f, 1.1f);
+            for (size_t i = 0; i < num_features; ++i) {
+                gamma.data[i] = dis(gen);
+                beta.data[i] = 0.0f;
+            }
+        }
+
+        if (track_running_stats) {
+            running_mean.shape = {num_features};
+            running_mean.resize();
+            running_var.shape = {num_features};
+            running_var.resize();
+        }
+    }
+
+    void forward(const Tensor &input, Tensor &output) override {
+        if (input.shape.size() != 5) {
+            throw std::invalid_argument("Входной тензор должен быть [N, C, D, H, W]");
+        }
+        if (input.shape[1] != num_features) {
+            throw std::invalid_argument("Количество каналов должно соответствовать num_features");
+        }
+        if (input.data.size() != input.size()) {
+            throw std::runtime_error("Размер входных данных не соответствует shape");
+        }
+    
+        size_t N = input.shape[0];
+        size_t C = input.shape[1];
+        size_t D = input.shape[2];
+        size_t H = input.shape[3];
+        size_t W = input.shape[4];
+    
+        output.shape = {N, C, D, H, W};
+        output.resize();
+    
+        input_data = input.data;
+    
+        for (size_t c = 0; c < C; ++c) {
+            float mean = 0.0f, var = 0.0f;
+            size_t count = N * D * H * W;
+    
+            // Вычисление среднего
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t d = 0; d < D; ++d) {
+                    for (size_t h = 0; h < H; ++h) {
+                        for (size_t w = 0; w < W; ++w) {
+                            size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+                            mean += input.data[idx];
+                        }
+                    }
+                }
+            }
+            mean /= count;
+    
+            // Вычисление дисперсии
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t d = 0; d < D; ++d) {
+                    for (size_t h = 0; h < H; ++h) {
+                        for (size_t w = 0; w < W; ++w) {
+                            size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+                            float diff = input.data[idx] - mean;
+                            var += diff * diff;
+                        }
+                    }
+                }
+            }
+            var /= count;
+    
+            // Обновление running_mean и running_var
+            if (track_running_stats) {
+                if (first_update) {
+                    running_mean.data[c] = mean;
+                    running_var.data[c] = var;
+                } else {
+                    running_mean.data[c] = (1 - momentum) * running_mean.data[c] + momentum * mean;
+                    running_var.data[c] = (1 - momentum) * running_var.data[c] + momentum * var;
+                }
+            }
+    
+            float inv_std = 1.0f / std::sqrt(var + eps);
+    
+            // Вычисление выхода с учетом affine за пределами вложенных циклов
+            if (affine) {
+                for (size_t n = 0; n < N; ++n) {
+                    for (size_t d = 0; d < D; ++d) {
+                        for (size_t h = 0; h < H; ++h) {
+                            for (size_t w = 0; w < W; ++w) {
+                                size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+                                float x_hat = (input.data[idx] - mean) * inv_std;
+                                output.data[idx] = gamma.data[c] * x_hat + beta.data[c];
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (size_t n = 0; n < N; ++n) {
+                    for (size_t d = 0; d < D; ++d) {
+                        for (size_t h = 0; h < H; ++h) {
+                            for (size_t w = 0; w < W; ++w) {
+                                size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+                                float x_hat = (input.data[idx] - mean) * inv_std;
+                                output.data[idx] = x_hat;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    
+        first_update = false;
+    }
+
+    void backward(const Tensor &grad_output, Tensor &grad_input) override {
+        if (input_data.empty()) {
+            throw std::runtime_error("input_data пустой. Сначала вызовите forward()");
+        }
+        if (grad_output.shape.size() != 5 || grad_output.shape[1] != num_features) {
+            throw std::invalid_argument("grad_output должен быть [N, C, D, H, W]");
+        }
+        if (grad_output.grad.empty()) {
+            throw std::runtime_error("grad_output.grad пустой");
+        }
+        if (input_data.size() != grad_output.shape[0] * num_features * grad_output.shape[2] * grad_output.shape[3] * grad_output.shape[4]) {
+            throw std::runtime_error("Размер input_data не соответствует ожидаемому");
+        }
+        if (affine && (gamma.grad.size() != num_features || beta.grad.size() != num_features)) {
+            throw std::runtime_error("Градиенты gamma или beta имеют неправильный размер");
+        }
+    
+        size_t N = grad_output.shape[0];
+        size_t C = grad_output.shape[1];
+        size_t D = grad_output.shape[2];
+        size_t H = grad_output.shape[3];
+        size_t W = grad_output.shape[4];
+    
+        grad_input.shape = {N, C, D, H, W};
+        grad_input.resize();
+        grad_input.resize_grad();
+    
+        const size_t count = N * D * H * W; // Перемещено и помечено как const
+        for (size_t c = 0; c < C; ++c) {
+            float mean = 0.0f, var = 0.0f;
+    
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t d = 0; d < D; ++d) {
+                    for (size_t h = 0; h < H; ++h) {
+                        for (size_t w = 0; w < W; ++w) {
+                            size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+                            mean += input_data[idx];
+                        }
+                    }
+                }
+            }
+            mean /= count;
+    
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t d = 0; d < D; ++d) {
+                    for (size_t h = 0; h < H; ++h) {
+                        for (size_t w = 0; w < W; ++w) {
+                            size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+                            float diff = input_data[idx] - mean;
+                            var += diff * diff;
+                        }
+                    }
+                }
+            }
+            var /= count;
+    
+            float inv_std = 1.0f / std::sqrt(var + eps);
+            float gamma_val = affine ? gamma.data[c] : 1.0f;
+    
+            float sum_dy = 0.0f, sum_dy_x_hat = 0.0f;
+            std::vector<float> x_hat(count);
+            size_t pos = 0;
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t d = 0; d < D; ++d) {
+                    for (size_t h = 0; h < H; ++h) {
+                        for (size_t w = 0; w < W; ++w) {
+                            size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+                            x_hat[pos] = (input_data[idx] - mean) * inv_std;
+                            sum_dy += grad_output.grad[idx];
+                            sum_dy_x_hat += grad_output.grad[idx] * x_hat[pos];
+                            pos++;
+                        }
+                    }
+                }
+            }
+    
+            pos = 0;
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t d = 0; d < D; ++d) {
+                    for (size_t h = 0; h < H; ++h) {
+                        for (size_t w = 0; w < W; ++w) {
+                            size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+                            float dy = grad_output.grad[idx];
+                            float dx_hat = dy;
+                            float term1 = dx_hat * inv_std * gamma_val;
+                            float term2 = inv_std * sum_dy / count * gamma_val;
+                            float term3 = inv_std * x_hat[pos] * sum_dy_x_hat / count * gamma_val;
+                            grad_input.grad[idx] = term1 - term2 - term3;
+    
+                            if (affine) {
+                                beta.grad[c] += dy;
+                                gamma.grad[c] += dy * x_hat[pos];
+                            }
+                            pos++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    std::string to_string() const override {
+        std::stringstream ss;
+        ss << "BatchNorm3d(" << num_features << ")";
+        return ss.str();
+    }
+
+    std::vector<Tensor *> parameters() override {
+        if (affine) {
+            return {&gamma, &beta};
+        }
+        return {};
+    }
+};
+
 } // namespace ttie
 
 #endif // TTIE_H
