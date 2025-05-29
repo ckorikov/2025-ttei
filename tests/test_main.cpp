@@ -719,6 +719,36 @@ TEST(LSTMTest, ForwardVSTorch)
     ASSERT_EQ(outputs[0].data.size(), torch_output.size());
     for (size_t i = 0; i < torch_output.size(); ++i)
     {
+        // std::cout << "i: " << i << "\n";
+        EXPECT_NEAR(outputs[0].data[i], torch_output[i], 1e-4f);
+    }
+
+    output.resize_grad();
+    output.grad = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    Tensor output_grad;
+    output_grad.shape = {seq_len, hidden_size};
+    output_grad.resize();
+
+    for (size_t i = 0; i < output_grad.data.size(); ++i)
+    {
+        output_grad.data[i] = 0.1f;
+    }
+
+    Tensor input_grad;
+    input_grad.shape = {seq_len, input_size};
+    input_grad.resize();
+    input_grad.resize_grad();
+
+    std::vector<Tensor> output_grads = {output_grad};
+    std::vector<Tensor> input_grads = {input_grad};
+
+    lstm.backward(inputs, outputs, output_grads, input_grads);
+    for (size_t i = 0; i < torch_output.size(); ++i)
+    {
+        std::cout << "i: " << i << "\n";
+        std::cout << "outputs[0].data[i]:" << outputs[0].data[i] << "\n";
+        std::cout << "torch_output[i]:" << torch_output[i] << "\n";
         EXPECT_NEAR(outputs[0].data[i], torch_output[i], 1e-4f);
     }
 }

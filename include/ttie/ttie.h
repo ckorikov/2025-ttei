@@ -917,9 +917,19 @@ struct LSTM : public Model
     size_t hidden_dim;
     size_t num_layers;
 
+    // LSTMCache нужен для хранения промежуточных состояний LSTM модели
+    struct LSTMCache
+    {
+        Tensor x_t, i_t, f_t, g_t, o_t, c_t, h_t, tanh_c;
+        Tensor h_prev;
+    };
+
+    mutable std::vector<std::vector<LSTMCache>> cache;
+
     LSTM(size_t D_in, size_t H, size_t L = 1)
         : input_dim(D_in), hidden_dim(H), num_layers(L)
     {
+        // Добавление LSTM слоёв, отдельно для x и h (по аналогии с torch.nn.LSTM)
         for (size_t layer = 0; layer < num_layers; ++layer)
         {
             size_t in_dim = (layer == 0 ? input_dim : hidden_dim);
@@ -951,6 +961,7 @@ struct LSTM : public Model
         return ss.str();
     }
 
+    // Изменённая реализация forward, т.к. в LSTM слои идут непоследовтельно
     void forward(const std::vector<Tensor> &inputs,
                  std::vector<Tensor> &outputs) const
     {
@@ -959,6 +970,7 @@ struct LSTM : public Model
         const size_t T = input_seq.shape[0];
         const size_t D = input_seq.shape[1];
 
+        // Дефолтная инициализация векторов h и c нулями
         std::vector<Tensor> h(num_layers), c(num_layers);
         for (size_t l = 0; l < num_layers; ++l)
         {
@@ -974,70 +986,83 @@ struct LSTM : public Model
         output_seq.resize();
 
         Tanh tanh_fn;
+        cache.resize(T, std::vector<LSTMCache>(num_layers));
 
-        Tensor x_t;
-        x_t.shape = {1, D};
-        x_t.resize();
-        Tensor temp1, temp2, i_t, f_t, g_t, o_t;
-        temp1.shape = temp2.shape = i_t.shape = f_t.shape = g_t.shape =
-            o_t.shape = {hidden_dim};
-        temp1.resize();
-        temp2.resize();
-        i_t.resize();
-        f_t.resize();
-        g_t.resize();
-        o_t.resize();
-
+        // Проход по времени
         for (size_t t = 0; t < T; ++t)
         {
+            Tensor x_t;
+            x_t.shape = {1, D};
+            x_t.resize();
             std::copy(input_seq.data.begin() + t * D,
                       input_seq.data.begin() + (t + 1) * D, x_t.data.begin());
 
             for (size_t l = 0; l < num_layers; ++l)
             {
                 size_t base = l * 16;
+                auto &c_entry = cache[t][l];
 
-                // i
-                assert(base + 0 < layers.size());
+                Tensor temp1, temp2, i_t, f_t, g_t, o_t, tanh_c;
+                temp1.shape = temp2.shape = i_t.shape = f_t.shape = g_t.shape =
+                    o_t.shape = tanh_c.shape = {hidden_dim};
+                temp1.resize();
+                temp2.resize();
+                i_t.resize();
+                f_t.resize();
+                g_t.resize();
+                o_t.resize();
+                tanh_c.resize();
+
+                // i (input gate)
                 layers[base + 0]->forward(x_t, temp1);
                 layers[base + 8]->forward(h[l], temp2);
                 for (size_t i = 0; i < hidden_dim; ++i)
                     i_t.data[i] = temp1.data[i] + temp2.data[i];
                 layers[base + 1]->forward(i_t, i_t);
 
-                // f
+                // f (forget gate)
                 layers[base + 2]->forward(x_t, temp1);
                 layers[base + 10]->forward(h[l], temp2);
                 for (size_t i = 0; i < hidden_dim; ++i)
                     f_t.data[i] = temp1.data[i] + temp2.data[i];
                 layers[base + 3]->forward(f_t, f_t);
 
-                // g
+                // g (state gate)
                 layers[base + 4]->forward(x_t, temp1);
                 layers[base + 12]->forward(h[l], temp2);
                 for (size_t i = 0; i < hidden_dim; ++i)
                     g_t.data[i] = temp1.data[i] + temp2.data[i];
                 layers[base + 5]->forward(g_t, g_t);
 
-                // o
+                // o (output gate)
                 layers[base + 6]->forward(x_t, temp1);
                 layers[base + 14]->forward(h[l], temp2);
                 for (size_t i = 0; i < hidden_dim; ++i)
                     o_t.data[i] = temp1.data[i] + temp2.data[i];
                 layers[base + 7]->forward(o_t, o_t);
 
-                // c, h
+                c_entry.h_prev = h[l];
+
+                // Обновление c и h
                 for (size_t i = 0; i < hidden_dim; ++i)
-                {
                     c[l].data[i] =
                         f_t.data[i] * c[l].data[i] + i_t.data[i] * g_t.data[i];
-                }
 
-                tanh_fn.forward(c[l], temp1);
+                tanh_fn.forward(c[l], tanh_c);
                 for (size_t i = 0; i < hidden_dim; ++i)
-                {
-                    h[l].data[i] = o_t.data[i] * temp1.data[i];
-                }
+                    h[l].data[i] = o_t.data[i] * tanh_c.data[i];
+
+                // Сохранение cache для последующего использования в backward
+                c_entry.x_t = x_t;
+                c_entry.i_t = i_t;
+                c_entry.f_t = f_t;
+                c_entry.g_t = g_t;
+                c_entry.o_t = o_t;
+                c_entry.c_t = c[l];
+                c_entry.c_t.resize_grad();
+                c_entry.h_t = h[l];
+                c_entry.h_t.resize_grad();
+                c_entry.tanh_c = tanh_c;
 
                 x_t = h[l];
             }
@@ -1047,14 +1072,136 @@ struct LSTM : public Model
         }
     }
 
-    void backward(const std::vector<Tensor> &outputs,
-                  std::vector<Tensor> &inputs) const
+    void backward(const std::vector<Tensor> &inputs,
+                  const std::vector<Tensor> &outputs,
+                  const std::vector<Tensor> &output_grads,
+                  std::vector<Tensor> &input_grads) const
     {
+        const Tensor &input_seq = inputs[0];
+        const Tensor &output_grad = output_grads[0];
+        Tensor &input_grad = input_grads[0];
+        const size_t T = input_seq.shape[0];
+        const size_t D = input_seq.shape[1];
 
-        const Tensor &output_seq = outputs[0];
-        Tensor &input_seq = inputs[0];
-        throw std::runtime_error("LSTM::backward() not implemented yet — "
-                                 "requires forward pass state caching.");
+        input_grad.shape = input_seq.shape;
+        input_grad.resize();
+        std::fill(input_grad.data.begin(), input_grad.data.end(), 0.0f);
+
+        std::vector<Tensor> dh_next(num_layers), dc_next(num_layers);
+        for (size_t l = 0; l < num_layers; ++l)
+        {
+            dh_next[l].shape = dc_next[l].shape = {hidden_dim};
+            dh_next[l].resize();
+            dc_next[l].resize();
+            std::fill(dh_next[l].data.begin(), dh_next[l].data.end(), 0.0f);
+            std::fill(dc_next[l].data.begin(), dc_next[l].data.end(), 0.0f);
+        }
+
+        Tanh tanh_grad;
+
+        // Проход в обратную сторону
+        for (int t = T - 1; t >= 0; --t)
+        {
+            Tensor grad_output;
+            grad_output.shape = {hidden_dim};
+            grad_output.resize();
+            std::copy(output_grad.data.begin() + t * hidden_dim,
+                      output_grad.data.begin() + (t + 1) * hidden_dim,
+                      grad_output.data.begin());
+
+            for (int l = num_layers - 1; l >= 0; --l)
+            {
+
+                size_t base = l * 16;
+                // Извлечение весов из cache
+                const auto &c_entry = cache[t][l];
+
+                const auto &i_t = c_entry.i_t;
+                const auto &f_t = c_entry.f_t;
+                const auto &g_t = c_entry.g_t;
+                const auto &o_t = c_entry.o_t;
+                const auto &c_t = c_entry.c_t;
+                const auto &tanh_c = c_entry.tanh_c;
+                const auto &h_prev = c_entry.h_prev;
+
+                Tensor dh = grad_output;
+                for (size_t i = 0; i < hidden_dim; ++i)
+                    dh.data[i] += dh_next[l].data[i];
+
+                Tensor do_t, di_t, df_t, dg_t, dc;
+                do_t.shape = di_t.shape = df_t.shape = dg_t.shape =
+                    dc.shape = {1, hidden_dim};
+
+                do_t.resize();
+                di_t.resize();
+                df_t.resize();
+                dg_t.resize();
+                dc.resize();
+
+                for (size_t i = 0; i < hidden_dim; ++i)
+                {
+                    do_t.data[i] = dh.data[i] * tanh_c.data[i];
+                }
+                Tensor tanh_c_grad;
+                tanh_c_grad.shape = {hidden_dim};
+                tanh_c_grad.resize();
+                // std::cout << "6\n";
+
+                // Проход по слоям в обратном порядке
+                for (size_t i = 0; i < hidden_dim; ++i)
+                {
+                    // std::cout << "6.1\n";
+                    // std::cout << "dc_next[l].data[i]" << dc_next[l].data[i]
+                    //           << "\n";
+                    // std::cout << "dc.data[i]" << dc.data[i] << "\n";
+                    // std::cout << c_t.grad.size() << "\n";
+                    // std::cout << "c_t.grad[i]" << c_t.grad[i] << "\n";
+
+                    dc.data[i] = dc_next[l].data[i] + c_t.grad[i];
+                    // std::cout << "6.2\n";
+                    di_t.data[i] = dc.data[i] * g_t.data[i];
+                    // std::cout << "6.3\n";
+                    df_t.data[i] = dc.data[i] *
+                                   (t > 0 ? cache[t - 1][l].c_t.data[i] : 0.0f);
+                    // std::cout << "6.4\n";
+                    dg_t.data[i] = dc.data[i] * i_t.data[i];
+                }
+                // std::cout << "7\n";
+
+                // Применение обратных активаций
+                layers[base + 7]->backward(do_t, do_t);
+                layers[base + 1]->backward(di_t, di_t);
+                layers[base + 3]->backward(df_t, df_t);
+                layers[base + 5]->backward(dg_t, dg_t);
+
+                Tensor dx, dh_prev;
+                dx.shape = dh_prev.shape = {hidden_dim};
+                dx.resize();
+                dh_prev.resize();
+                layers[base + 6]->backward(do_t, dx);
+                layers[base + 14]->backward(do_t, dh_prev);
+
+                layers[base + 0]->backward(di_t, dx);
+                layers[base + 8]->backward(di_t, dh_prev);
+
+                layers[base + 2]->backward(df_t, dx);
+                layers[base + 10]->backward(df_t, dh_prev);
+
+                layers[base + 4]->backward(dg_t, dx);
+                layers[base + 12]->backward(dg_t, dh_prev);
+
+                dh_next[l] = dh_prev;
+                for (size_t i = 0; i < hidden_dim; ++i)
+                    dc_next[l].data[i] = dc.data[i] * f_t.data[i];
+
+                if (l == 0)
+                    std::copy(dx.data.begin(), dx.data.end(),
+                              input_grad.data.begin() + t * D);
+            }
+        }
+    }
+};
+
 class BatchNorm1d : public Layer {
 private:
     size_t num_features;
