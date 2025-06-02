@@ -1,0 +1,24 @@
+Checks: >
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  readability-*,
+  modernize-use-nullptr,
+  -readability-uppercase-literal-suffix,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -clang-analyzer-optin.cplusplus.VirtualCall
+
+WarningsAsErrors: ''
+
+HeaderFilterRegex: '^(?!.*(/_deps/|/external/|third_party|googletest)).*(ttie|example|tests)/.*$'
+
+FormatStyle: file
+
+CheckOptions:
+  - key: modernize-use-auto.MinTypeNameLength
+    value: '5'
+  - key: modernize-use-nullptr.NullMacros
+    value: 'NULL'
+  - key: readability-identifier-naming.IgnoreMainLikeFunctions
+    value: '1'
