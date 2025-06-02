@@ -7,7 +7,7 @@ export CXX=/c/msys64/ucrt64/bin/g++.exe
 # Remove build folder if exists
 if [ -d build ]; then
     echo "Remove old build folder"
-    rm -rf build
+    #rm -rf build
 else
     echo "build doesn't exist"
 fi

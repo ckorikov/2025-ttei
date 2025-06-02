@@ -1,7 +1,7 @@
 #include "ttie/ttie.h"
+#include <cmath>
 #include <gtest/gtest.h>
 #include <random>
-#include <cmath>
 
 using namespace ttie;
 
@@ -414,7 +414,7 @@ TEST(ModelTest, ForwardAndBackwardVSTorch)
     EXPECT_NEAR(layer2->bias.grad[0], 2.0000f, 1e-4f);
 }
 
-TEST(LSTMTest, Initialization)
+TEST(LSTMTest, Initialization) // Validation of LSTM
 {
     LSTM lstm(3, 4); // input_size = 3, hidden_size = 4
 
@@ -427,8 +427,9 @@ TEST(LSTMTest, Initialization)
     }
 }
 
-TEST(LSTMTest, ForwardShapeAndSanity)
+TEST(LSTMTest, ForwardShapeAndSanity) // Shape of tensors and sanity of outputs
 {
+    // batch_size = 1 as default
     const size_t seq_len = 1;
     const size_t input_size = 3;
     const size_t hidden_size = 4;
@@ -451,7 +452,7 @@ TEST(LSTMTest, ForwardShapeAndSanity)
     std::vector<Tensor> inputs = {input_seq};
     std::vector<Tensor> outputs = {output_seq};
 
-    lstm.forward(inputs, outputs);
+    lstm.forward(input_seq, output_seq);
 
     EXPECT_EQ(outputs[0].shape[0], seq_len);
     EXPECT_EQ(outputs[0].shape[1], hidden_size);
@@ -462,9 +463,9 @@ TEST(LSTMTest, ForwardShapeAndSanity)
     }
 }
 
-TEST(LSTMTest, ForwardVSTorch)
+TEST(LSTMTest, ForwardAndBackwardVSTorch) // LSTM forward and backward propagation tests
 {
-    /* Pytorch reference
+    /*
     # 1 Layer
     import torch
     import torch.nn as nn
@@ -476,38 +477,37 @@ TEST(LSTMTest, ForwardVSTorch)
     num_layers = 1
 
     x = torch.tensor([
-        [0, 0.1],
-        [0.2, 0.3]
-    ], dtype=torch.float32).unsqueeze(1)  # [seq_len, batch, input_dim]
+        [0.5, 1.0],
+        [1.0, 1.5]
+    ], dtype=torch.float32).unsqueeze(1)
+    x.requires_grad_()
 
-    lstm = nn.LSTM(input_dim, hidden_dim, num_layers=num_layers,
-    batch_first=False)
+    lstm = nn.LSTM(input_dim, hidden_dim, num_layers=num_layers, batch_first=False)
 
     weight_ih = torch.tensor([
-        [0.1, 0.2],   # W_ii
-        [0.3, 0.4],
-        [0.5, 0.6],   # W_if
+        [0.5, 0.6],
         [0.7, 0.8],
-        [0.9, 1.0],   # W_ig
+        [0.9, 1.0],
         [1.1, 1.2],
-        [1.3, 1.4],   # W_io
-        [1.5, 1.6]
-    ], dtype=torch.float32)
+        [0.5, 0.6],
+        [0.7, 0.8],
+        [0.9, 1.0],
+        [1.1, 1.2]
+    ])
 
     weight_hh = torch.tensor([
-        [2.1, 2.2],   # W_fi
-        [2.3, 2.4],
-        [2.5, 2.6],   # W_ff
-        [2.7, 2.8],
-        [2.9, 3.0],   # W_fg
-        [3.1, 3.2],
-        [3.3, 3.4],   # W_fo
-        [3.5, 3.6]
-    ], dtype=torch.float32)
+        [0.2, 0.3],
+        [0.3, 0.4],
+        [0.4, 0.5],
+        [0.5, 0.6],
+        [0.2, 0.3],
+        [0.3, 0.4],
+        [0.4, 0.5],
+        [0.5, 0.6]
+    ])
 
-    bias_ih = torch.tensor([4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8],
-    dtype=torch.float32) bias_hh =
-    torch.tensor([5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8], dtype=torch.float32)
+    bias_ih = torch.ones(8) * 0.5
+    bias_hh = torch.ones(8) * 0.5
 
     with torch.no_grad():
         lstm.weight_ih_l0.copy_(weight_ih)
@@ -515,16 +515,13 @@ TEST(LSTMTest, ForwardVSTorch)
         lstm.bias_ih_l0.copy_(bias_ih)
         lstm.bias_hh_l0.copy_(bias_hh)
 
-    # LSTM (1 layer)
-    #for param in lstm.parameters():
-    #    nn.init.uniform_(param, a=-0.1, b=0.1)  # ensure deterministic
-    initialization
+    x.requires_grad_()
 
-    # Initial states (h_0, c_0): default is zeros
     output, (hn, cn) = lstm(x)
 
-    grad_output = torch.ones_like(output)
-    # Backward pass
+    grad_output = torch.zeros_like(output)
+    grad_output[1, 0] = torch.tensor([1.0, 1.0])  # Только по h₁
+    grad_output[0, 0] = torch.tensor([1.0, 1.0])
     output.backward(grad_output)
 
     print("Input (x):")
@@ -570,39 +567,40 @@ TEST(LSTMTest, ForwardVSTorch)
     print(lstm.bias_ih_l0.grad)
     print("\nbias_hh_l0.grad:")
     print(lstm.bias_hh_l0.grad)
-    */
 
-    /*
+    print("\nGradient of input x:")
+    print(x.grad.squeeze(1))
+
     Input (x):
-    tensor([[1., 2.],
-            [3., 4.]])
+    tensor([[0.5000, 1.0000],
+            [1.0000, 1.5000]], grad_fn=<SqueezeBackward1>)
 
     --- LSTM Parameters ---
     weight_ih_l0:
-    tensor([[0.1000, 0.2000],
-            [0.3000, 0.4000],
-            [0.5000, 0.6000],
+    tensor([[0.5000, 0.6000],
             [0.7000, 0.8000],
             [0.9000, 1.0000],
             [1.1000, 1.2000],
-            [1.3000, 1.4000],
-            [1.5000, 1.6000]])
+            [0.5000, 0.6000],
+            [0.7000, 0.8000],
+            [0.9000, 1.0000],
+            [1.1000, 1.2000]])
 
     weight_hh_l0:
-    tensor([[2.1000, 2.2000],
-            [2.3000, 2.4000],
-            [2.5000, 2.6000],
-            [2.7000, 2.8000],
-            [2.9000, 3.0000],
-            [3.1000, 3.2000],
-            [3.3000, 3.4000],
-            [3.5000, 3.6000]])
+    tensor([[0.2000, 0.3000],
+            [0.3000, 0.4000],
+            [0.4000, 0.5000],
+            [0.5000, 0.6000],
+            [0.2000, 0.3000],
+            [0.3000, 0.4000],
+            [0.4000, 0.5000],
+            [0.5000, 0.6000]])
 
     bias_ih_l0:
-    tensor([4.1000, 4.2000, 4.3000, 4.4000, 4.5000, 4.6000, 4.7000, 4.8000])
+    tensor([0.5000, 0.5000, 0.5000, 0.5000, 0.5000, 0.5000, 0.5000, 0.5000])
 
     bias_hh_l0:
-    tensor([5.1000, 5.2000, 5.3000, 5.4000, 5.5000, 5.6000, 5.7000, 5.8000])
+    tensor([0.5000, 0.5000, 0.5000, 0.5000, 0.5000, 0.5000, 0.5000, 0.5000])
 
     Initial h_0:
     tensor([[[0., 0.]]])
@@ -612,14 +610,46 @@ TEST(LSTMTest, ForwardVSTorch)
 
     --- LSTM Outputs ---
     Output:
-    tensor([[0.7616, 0.7616],
-            [0.9640, 0.9640]], grad_fn=<SqueezeBackward1>)
+    tensor([[0.6227, 0.6600],
+            [0.9227, 0.9401]], grad_fn=<SqueezeBackward1>)
 
     Hidden state hn:
-    tensor([[0.9640, 0.9640]], grad_fn=<SqueezeBackward1>)
+    tensor([[0.9227, 0.9401]], grad_fn=<SqueezeBackward1>)
 
     Cell state cn:
-    tensor([[1.9999, 2.0000]], grad_fn=<SqueezeBackward1>)
+    tensor([[1.7376, 1.8268]], grad_fn=<SqueezeBackward1>)
+
+    Weight gradients:
+    weight_ih_l0.grad:
+    tensor([[0.0412, 0.0790],
+            [0.0297, 0.0577],
+            [0.0017, 0.0025],
+            [0.0008, 0.0012],
+            [0.0270, 0.0532],
+            [0.0142, 0.0282],
+            [0.0420, 0.0756],
+            [0.0295, 0.0544]])
+
+    weight_hh_l0.grad:
+    tensor([[0.0041, 0.0043],
+            [0.0020, 0.0021],
+            [0.0011, 0.0011],
+            [0.0005, 0.0005],
+            [0.0011, 0.0012],
+            [0.0003, 0.0003],
+            [0.0105, 0.0112],
+            [0.0058, 0.0061]])
+
+    Bias gradients:
+    bias_ih_l0.grad:
+    tensor([0.0758, 0.0561, 0.0017, 0.0008, 0.0522, 0.0280, 0.0672, 0.0497])
+
+    bias_hh_l0.grad:
+    tensor([0.0758, 0.0561, 0.0017, 0.0008, 0.0522, 0.0280, 0.0672, 0.0497])
+
+    Gradient of input x:
+    tensor([[0.2058, 0.2349],
+            [0.0347, 0.0387]])
     */
 
     const size_t seq_len = 2;
@@ -627,131 +657,148 @@ TEST(LSTMTest, ForwardVSTorch)
     const size_t hidden_size = 2;
     const size_t num_layers = 1;
 
-    LSTM lstm(input_size, hidden_size, num_layers);
+    LSTM lstm(input_size, hidden_size, num_layers); // batch_size = 1 as default
 
+    // input and output filling
     Tensor input;
     input.shape = {seq_len, input_size};
     input.resize();
 
-    for (size_t i = 0; i < input.data.size(); ++i)
-    {
-        input.data[i] = static_cast<float>(i) / 10.0f;
-    }
+    input.data[0] = 0.5f;
+    input.data[1] = 1.0f;
+    input.data[2] = 1.0f;
+    input.data[3] = 1.5f;
 
     Tensor output;
     output.shape = {seq_len, hidden_size};
     output.resize();
 
-    std::vector<Tensor> inputs = {input};
-    std::vector<Tensor> outputs = {output};
-
+    // Layers initialization
     Linear *layer_ii = static_cast<Linear *>(lstm.layers[0]);
-    layer_ii->weight.data = {0.1, 0.2, 0.3, 0.4};
-    layer_ii->bias.data = {4.1, 4.2};
+    layer_ii->weight.data = {0.5f, 0.7f, 0.6f, 0.8f};
+    layer_ii->bias.data = {0.5f, 0.5f};
 
     Linear *layer_if = static_cast<Linear *>(lstm.layers[2]);
-    layer_if->weight.data = {0.5, 0.6, 0.7, 0.8};
-    layer_if->bias.data = {4.3, 4.4};
+    layer_if->weight.data = {0.9f, 1.1f, 1.0f, 1.2f};
+    layer_if->bias.data = {0.5f, 0.5f};
 
     Linear *layer_ig = static_cast<Linear *>(lstm.layers[4]);
-    layer_ig->weight.data = {0.9, 1.0, 1.1, 1.2};
-    layer_ig->bias.data = {4.5, 4.6};
+    layer_ig->weight.data = {0.5f, 0.7f, 0.6f, 0.8f};
+    layer_ig->bias.data = {0.5f, 0.5f};
 
     Linear *layer_io = static_cast<Linear *>(lstm.layers[6]);
-    layer_io->weight.data = {1.3, 1.4, 1.5, 1.6};
-    layer_io->bias.data = {4.7, 4.8};
+    layer_io->weight.data = {0.9f, 1.1f, 1.0f, 1.2f};
+    layer_io->bias.data = {0.5f, 0.5f};
 
     Linear *layer_hi = static_cast<Linear *>(lstm.layers[8]);
-    layer_hi->weight.data = {2.1, 2.2, 2.3, 2.4};
-    layer_hi->bias.data = {5.1, 5.2};
+    layer_hi->weight.data = {0.2f, 0.3f, 0.3f, 0.4f};
+    layer_hi->bias.data = {0.5f, 0.5f};
 
     Linear *layer_hf = static_cast<Linear *>(lstm.layers[10]);
-    layer_hf->weight.data = {2.5, 2.6, 2.7, 2.8};
-    layer_hf->bias.data = {5.3, 5.4};
+    layer_hf->weight.data = {0.4f, 0.5f, 0.5f, 0.6f};
+    layer_hf->bias.data = {0.5f, 0.5f};
 
     Linear *layer_hg = static_cast<Linear *>(lstm.layers[12]);
-    layer_hg->weight.data = {2.9, 3.0, 3.1, 3.2};
-    layer_hg->bias.data = {5.5, 5.6};
+    layer_hg->weight.data = {0.2f, 0.3f, 0.3f, 0.4f};
+    layer_hg->bias.data = {0.5f, 0.5f};
 
     Linear *layer_ho = static_cast<Linear *>(lstm.layers[14]);
-    layer_ho->weight.data = {3.3, 3.4, 3.5, 3.6};
-    layer_ho->bias.data = {5.7, 5.8};
+    layer_ho->weight.data = {0.4f, 0.5f, 0.5f, 0.6f};
+    layer_ho->bias.data = {0.5f, 0.5f};
 
-    // Second layer (TODO)
+    // forward checking
+    lstm.forward(input, output);
+    std::vector<float> torch_output = {0.6227f, 0.6600f, 0.9227f, 0.9401f};
 
-    /*
-    Linear* layer_ii_2 = static_cast<Linear*>(lstm.layers[16 + 0]);
-    layer_ii_2->weight.data = {-0.1, -0.2, -0.3, -0.4};
-    layer_ii_2->bias.data = {-4.1, -4.2};
-
-    Linear* layer_if_2 = static_cast<Linear*>(lstm.layers[16 + 2]);
-    layer_if_2->weight.data = {-0.5, -0.6, -0.7, -0.8};
-    layer_if_2->bias.data = {-4.3, -4.4};
-
-    Linear* layer_ig_2 = static_cast<Linear*>(lstm.layers[16 + 4]);
-    layer_ig_2->weight.data = {-0.9, -1.0, -1.1, -1.2};
-    layer_ig_2->bias.data = {-4.5, -4.6};
-
-    Linear* layer_io_2 = static_cast<Linear*>(lstm.layers[16 + 6]);
-    layer_io_2->weight.data = {-1.3, -1.4, -1.5, -1.6};
-    layer_io_2->bias.data = {-4.7, -4.8};
-
-    Linear* layer_hi_2 = static_cast<Linear*>(lstm.layers[16 + 8]);
-    layer_hi_2->weight.data = {-2.1, -2.2, -2.3, -2.4};
-    layer_hi_2->bias.data = {-5.1, -5.2};
-
-    Linear* layer_hf_2 = static_cast<Linear*>(lstm.layers[16 + 10]);
-    layer_hf_2->weight.data = {-2.5, -2.6, -2.7, -2.8};
-    layer_hf_2->bias.data = {-5.3, -5.4};
-
-    Linear* layer_hg_2 = static_cast<Linear*>(lstm.layers[16 + 12]);
-    layer_hg_2->weight.data = {-2.9, -3.0, -3.1, -3.2};
-    layer_hg_2->bias.data = {-5.5, -5.6};
-
-    Linear* layer_ho_2 = static_cast<Linear*>(lstm.layers[16 + 14]);
-    layer_ho_2->weight.data = {-3.3, -3.4, -3.5, -3.6};
-    layer_ho_2->bias.data = {-5.7, -5.8};
-
-    */
-    lstm.forward(inputs, outputs);
-    std::vector<float> torch_output = {0.7615f, 0.7615f, 0.9640f, 0.9640f};
-
-    ASSERT_EQ(outputs[0].data.size(), torch_output.size());
+    ASSERT_EQ(output.data.size(), torch_output.size());
     for (size_t i = 0; i < torch_output.size(); ++i)
     {
-        // std::cout << "i: " << i << "\n";
-        EXPECT_NEAR(outputs[0].data[i], torch_output[i], 1e-4f);
+        EXPECT_NEAR(output.data[i], torch_output[i], 1e-4f);
     }
 
+    // Gradients filling
     output.resize_grad();
     output.grad = {1.0f, 1.0f, 1.0f, 1.0f};
+    input.resize_grad();
+    input.zero_grad();
 
-    Tensor output_grad;
-    output_grad.shape = {seq_len, hidden_size};
-    output_grad.resize();
+    // backward checking
+    lstm.backward(output, input);
+    std::vector<float> torch_input_grad = {0.2058f, 0.2349f, 0.0347f, 0.0387f};
 
-    for (size_t i = 0; i < output_grad.data.size(); ++i)
+    // Validation of gradients for input and all layers
+    for (size_t i = 0; i < torch_input_grad.size(); ++i)
     {
-        output_grad.data[i] = 0.1f;
+        EXPECT_NEAR(input.grad[i], torch_input_grad[i], 1e-4f);
     }
 
-    Tensor input_grad;
-    input_grad.shape = {seq_len, input_size};
-    input_grad.resize();
-    input_grad.resize_grad();
+    std::vector<float> torch_grad_weight_ii = {0.0412f, 0.0297f, 0.0790f,
+                                               0.0577f};
+    std::vector<float> torch_grad_weight_if = {0.0017f, 0.0008f, 0.0025f,
+                                               0.0012f};
+    std::vector<float> torch_grad_weight_ig = {0.0270f, 0.0142f, 0.0532f,
+                                               0.0282f};
+    std::vector<float> torch_grad_weight_io = {0.0420f, 0.0295f, 0.0756f,
+                                               0.0544f};
 
-    std::vector<Tensor> output_grads = {output_grad};
-    std::vector<Tensor> input_grads = {input_grad};
+    std::vector<float> torch_grad_weight_hi = {0.0041f, 0.0020f, 0.0043f,
+                                               0.0021f};
+    std::vector<float> torch_grad_weight_hf = {0.0011f, 0.0005f, 0.0011f,
+                                               0.0005f};
+    std::vector<float> torch_grad_weight_hg = {0.0011f, 0.0003f, 0.0012f,
+                                               0.0003f};
+    std::vector<float> torch_grad_weight_ho = {0.0105f, 0.0058f, 0.0112f,
+                                               0.0061f};
 
-    lstm.backward(inputs, outputs, output_grads, input_grads);
-    for (size_t i = 0; i < torch_output.size(); ++i)
+    ASSERT_EQ(layer_ii->weight.grad.size(), torch_grad_weight_ii.size());
+    ASSERT_EQ(layer_if->weight.grad.size(), torch_grad_weight_if.size());
+    ASSERT_EQ(layer_ig->weight.grad.size(), torch_grad_weight_ig.size());
+    ASSERT_EQ(layer_io->weight.grad.size(), torch_grad_weight_io.size());
+
+    ASSERT_EQ(layer_hi->weight.grad.size(), torch_grad_weight_hi.size());
+    ASSERT_EQ(layer_hf->weight.grad.size(), torch_grad_weight_hf.size());
+    ASSERT_EQ(layer_hg->weight.grad.size(), torch_grad_weight_hg.size());
+    ASSERT_EQ(layer_ho->weight.grad.size(), torch_grad_weight_ho.size());
+
+    for (size_t i = 0; i < torch_grad_weight_ii.size(); ++i)
     {
-        std::cout << "i: " << i << "\n";
-        std::cout << "outputs[0].data[i]:" << outputs[0].data[i] << "\n";
-        std::cout << "torch_output[i]:" << torch_output[i] << "\n";
-        EXPECT_NEAR(outputs[0].data[i], torch_output[i], 1e-4f);
+        EXPECT_NEAR(layer_ii->weight.grad[i], torch_grad_weight_ii[i], 1e-4f);
+        EXPECT_NEAR(layer_if->weight.grad[i], torch_grad_weight_if[i], 1e-4f);
+        EXPECT_NEAR(layer_ig->weight.grad[i], torch_grad_weight_ig[i], 1e-4f);
+        EXPECT_NEAR(layer_io->weight.grad[i], torch_grad_weight_io[i], 1e-4f);
+
+        EXPECT_NEAR(layer_hi->weight.grad[i], torch_grad_weight_hi[i], 1e-4f);
+        EXPECT_NEAR(layer_hf->weight.grad[i], torch_grad_weight_hf[i], 1e-4f);
+        EXPECT_NEAR(layer_hg->weight.grad[i], torch_grad_weight_hg[i], 1e-4f);
+        EXPECT_NEAR(layer_ho->weight.grad[i], torch_grad_weight_ho[i], 1e-4f);
+    }
+
+    std::vector<float> torch_grad_bias_ii = {0.0758f, 0.0561f};
+    std::vector<float> torch_grad_bias_if = {0.0017f, 0.0008f};
+    std::vector<float> torch_grad_bias_ig = {0.0522f, 0.0280f};
+    std::vector<float> torch_grad_bias_io = {0.0672f, 0.0497f};
+
+    std::vector<float> torch_grad_bias_hi = {0.0758f, 0.0561f};
+    std::vector<float> torch_grad_bias_hf = {0.0017f, 0.0008f};
+    std::vector<float> torch_grad_bias_hg = {0.0522f, 0.0280f};
+    std::vector<float> torch_grad_bias_ho = {0.0672f, 0.0497f};
+
+    ASSERT_EQ(layer_ii->bias.grad.size(), torch_grad_bias_ii.size());
+    for (size_t i = 0; i < torch_grad_bias_ii.size(); ++i)
+    {
+        EXPECT_NEAR(layer_ii->bias.grad[i], torch_grad_bias_ii[i], 1e-4f);
+        EXPECT_NEAR(layer_if->bias.grad[i], torch_grad_bias_if[i], 1e-4f);
+        EXPECT_NEAR(layer_ig->bias.grad[i], torch_grad_bias_ig[i], 1e-4f);
+        EXPECT_NEAR(layer_io->bias.grad[i], torch_grad_bias_io[i], 1e-4f);
+
+        EXPECT_NEAR(layer_hi->bias.grad[i], torch_grad_bias_hi[i], 1e-4f);
+        EXPECT_NEAR(layer_hf->bias.grad[i], torch_grad_bias_hf[i], 1e-4f);
+        EXPECT_NEAR(layer_hg->bias.grad[i], torch_grad_bias_hg[i], 1e-4f);
+        EXPECT_NEAR(layer_ho->bias.grad[i], torch_grad_bias_ho[i], 1e-4f);
     }
 }
+
+/*
 
 TEST(TensorTransposeTest, BasicTransposition)
 {
@@ -771,9 +818,9 @@ TEST(TensorTransposeTest, IdentityTransposition)
     t.shape = {2, 3, 4};
     t.resize();
     std::iota(t.data.begin(), t.data.end(), 1);
-    
+
     Tensor result = t.transpose(1, 1);
-    
+
     EXPECT_EQ(result.shape, t.shape);
     EXPECT_EQ(result.data, t.data);
 }
@@ -796,28 +843,29 @@ TEST(TensorTransposeTest, HigherDimTransposition)
     tensor(13)
     tensor(9)
     tensor(24)
-    */
+
 
     Tensor t;
     t.shape = {2, 3, 4};
     t.resize();
     std::iota(t.data.begin(), t.data.end(), 1);
-    
+
     Tensor result = t.transpose(0, 2);
-    
+
     EXPECT_EQ(result.shape, std::vector<size_t>({4, 3, 2}));
-    
+
     EXPECT_FLOAT_EQ(result.data[0], 1);
     EXPECT_FLOAT_EQ(result.data[1], 13);
     EXPECT_FLOAT_EQ(result.data[4], 9);
     EXPECT_FLOAT_EQ(result.data[23], 24);
 }
 
+
 TEST(TensorTransposeTest, InvalidDimensions)
 {
     Tensor t;
     t.shape = {2, 3};
-    
+
     EXPECT_THROW(t.transpose(0, 5), std::invalid_argument);
     EXPECT_THROW(t.transpose(5, 0), std::invalid_argument);
     EXPECT_THROW(t.transpose(5, 5), std::invalid_argument);
@@ -826,7 +874,7 @@ TEST(TensorTransposeTest, InvalidDimensions)
 TEST(TensorTransposeTest, EmptyTensor)
 {
     Tensor t;
-    
+
     EXPECT_THROW(t.transpose(0, 1), std::invalid_argument);
 }
 
@@ -834,8 +882,8 @@ TEST(TensorTransposeTest, DataIntegrity)
 {
     Tensor t;
     t.shape = {3, 3};
-    t.data = {1,2,3,4,5,6,7,8,9};
-    
+    t.data = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+
     Tensor t1 = t.transpose(0, 1);
     Tensor t2 = t1.transpose(0, 1);
 
@@ -847,8 +895,8 @@ TEST(TensorTransposeTest, NoChangeTensor)
 {
     Tensor t;
     t.shape = {2, 3};
-    t.data = {1,2,3,4,5,6};
-    
+    t.data = {1, 2, 3, 4, 5, 6};
+
     Tensor t1 = t.transpose(0, 1);
     std::vector<size_t> test = {2, 3};
     EXPECT_EQ(test, t.shape);
@@ -858,24 +906,21 @@ TEST(TensorMatMulTest, SimpleMatrixMultiplication)
 {
     Tensor a;
     a.shape = {2, 3};
-    a.data = {1, 2, 3, 
-              4, 5, 6};
-    
+    a.data = {1, 2, 3, 4, 5, 6};
+
     Tensor b;
     b.shape = {3, 2};
-    b.data = {7, 8, 
-              9, 10,
-              11, 12};
-    
+    b.data = {7, 8, 9, 10, 11, 12};
+
     Tensor expected;
     expected.shape = {2, 2};
-    expected.data = {58, 64, 
-                    139, 154};
-    
+    expected.data = {58, 64, 139, 154};
+
     Tensor result;
     result = matmul(a, b);
     EXPECT_EQ(result.shape, expected.shape);
-    for (size_t i = 0; i < expected.data.size(); ++i) {
+    for (size_t i = 0; i < expected.data.size(); ++i)
+    {
         EXPECT_FLOAT_EQ(result.data[i], expected.data[i]);
     }
 }
@@ -896,28 +941,24 @@ TEST(TensorMatMulTest, BatchMatrixMultiplication)
 
             [[220, 244],
             [301, 334]]])
-    */
+
     Tensor a;
     a.shape = {2, 2, 3};
-    a.data = {1,2,3,4,5,6,
-              7,8,9,10,11,12};
+    a.data = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
 
     Tensor b;
     b.shape = {2, 3, 2};
-    b.data = {1,2,3,4,5,6,
-              7,8,9,10,11,12}; 
-    
+    b.data = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+
     Tensor expected;
     expected.shape = {2, 2, 2};
-    expected.data = {22, 28,  
-                     49, 64,
-                     220, 244,
-                     301, 334};
-    
+    expected.data = {22, 28, 49, 64, 220, 244, 301, 334};
+
     Tensor result;
     result = matmul(a, b);
     ASSERT_EQ(result.shape, expected.shape);
-    for (size_t i = 0; i < expected.data.size(); ++i) {
+    for (size_t i = 0; i < expected.data.size(); ++i)
+    {
         EXPECT_FLOAT_EQ(result.data[i], expected.data[i]);
     }
 }
@@ -927,15 +968,15 @@ TEST(TensorMatMulTest, VectorMatrixMultiplication)
     Tensor a;
     a.shape = {1, 3};
     a.data = {1, 2, 3};
-    
+
     Tensor b;
     b.shape = {3, 2};
-    b.data = {4,5,6,7,8,9};
-    
+    b.data = {4, 5, 6, 7, 8, 9};
+
     Tensor expected;
     expected.shape = {1, 2};
     expected.data = {40, 46};
-    
+
     Tensor result;
     result = matmul(a, b);
     EXPECT_EQ(result.shape, expected.shape);
@@ -949,7 +990,7 @@ TEST(TensorMatMulTest, DimensionMismatchError)
     a.shape = {2, 3};
     Tensor b;
     b.shape = {4, 5};
-    
+
     EXPECT_THROW(matmul(a, b), std::invalid_argument);
 }
 
@@ -959,7 +1000,7 @@ TEST(TensorMatMulTest, NotEnoughDimensionsError)
     a.shape = {3};
     Tensor b;
     b.shape = {3};
-    
+
     EXPECT_THROW(matmul(a, b), std::invalid_argument);
 }
 
@@ -969,7 +1010,7 @@ TEST(TensorMatMulTest, BatchSizeMismatchError)
     a.shape = {2, 2, 3};
     Tensor b;
     b.shape = {3, 3, 3};
-    
+
     EXPECT_THROW(matmul(a, b), std::invalid_argument);
 }
 
@@ -978,13 +1019,13 @@ TEST(TensorMatMulTest, FloatingPointPrecision)
     Tensor a;
     a.shape = {2, 2};
     a.data = {0.1f, 0.2f, 0.3f, 0.4f};
-    
+
     Tensor b;
     b.shape = {2, 2};
     b.data = {0.5f, 0.6f, 0.7f, 0.8f};
-    
+
     Tensor result = matmul(a, b);
-    
+
     EXPECT_NEAR(result.data[0], 0.19f, 1e-6f);
     EXPECT_NEAR(result.data[1], 0.22f, 1e-6f);
     EXPECT_NEAR(result.data[2], 0.43f, 1e-6f);
@@ -996,11 +1037,11 @@ TEST(TensorViewTest, BasicReshape)
     Tensor t;
     t.shape = {2, 3};
     t.data = {1, 2, 3, 4, 5, 6};
-    
+
     Tensor result = t.view({3, 2});
-    
+
     EXPECT_EQ(result.shape, std::vector<size_t>({3, 2}));
-    
+
     EXPECT_EQ(result.data, t.data);
 }
 
@@ -1010,9 +1051,9 @@ TEST(TensorViewTest, FlattenToVector)
     t.shape = {2, 2, 2};
     t.resize();
     std::iota(t.data.begin(), t.data.end(), 1);
-    
+
     Tensor flat = t.view({8});
-    
+
     EXPECT_EQ(flat.shape, std::vector<size_t>({8}));
     EXPECT_EQ(flat.data.size(), 8);
     EXPECT_EQ(flat.data, t.data);
@@ -1023,9 +1064,9 @@ TEST(TensorViewTest, AddDimensions)
     Tensor t;
     t.shape = {6};
     t.data = {1, 2, 3, 4, 5, 6};
-    
+
     Tensor result = t.view({1, 3, 2});
-    
+
     EXPECT_EQ(result.shape, std::vector<size_t>({1, 3, 2}));
     EXPECT_EQ(result.data, t.data);
 }
@@ -1035,7 +1076,7 @@ TEST(TensorViewTest, InvalidTotalSize)
     Tensor t;
     t.shape = {4, 5};
     t.resize();
-    
+
     EXPECT_THROW(t.view({3, 7}), std::invalid_argument);
 }
 
@@ -1044,7 +1085,7 @@ TEST(TensorViewTest, ZeroDimension)
     Tensor t;
     t.shape = {4, 5};
     t.resize();
-    
+
     EXPECT_THROW(t.view({0, 20}), std::invalid_argument);
 }
 
@@ -1052,13 +1093,16 @@ TEST(ScaledDotProductAttentionTest, BasicForward)
 {
     ScaledDotProductAttention attn;
     Tensor q, k, v, out;
-    
-    q.shape = {1, 1, 1}; q.data = {1.0f};
-    k.shape = {1, 1, 1}; k.data = {1.0f};
-    v.shape = {1, 1, 1}; v.data = {1.0f};
-    
+
+    q.shape = {1, 1, 1};
+    q.data = {1.0f};
+    k.shape = {1, 1, 1};
+    k.data = {1.0f};
+    v.shape = {1, 1, 1};
+    v.data = {1.0f};
+
     attn.forward(q, k, v, out);
-    
+
     EXPECT_EQ(out.shape, v.shape);
     EXPECT_NEAR(out.data[0], 1.0f, 1e-6f);
 }
@@ -1074,20 +1118,20 @@ TEST(ScaledDotProductAttentionTest, SmallMatrix)
         def __init__(self, dropout=0.1):
             super(ScaledDotProductAttention, self).__init__()
             self.dropout = nn.Dropout(dropout)
-        
+
         def forward(self, q, k, v, mask=None):
             d_k = q.size(-1)
             attn_logits = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)
 
             if mask is not None:
                 attn_logits = attn_logits.masked_fill(mask==0, -1e9)
-            
+
             attention = torch.softmax(attn_logits, dim=-1)
             # attention = self.dropout(attention)
             values = torch.matmul(attention, v)
 
             return values, attention
-        
+
 
     q = torch.tensor([1, 0, 1, 0, 1, 0], dtype=torch.float).reshape(1, 2, 3)
     k = torch.tensor([1, 1, 0, 0, 1, 1], dtype=torch.float).reshape(1, 2, 3)
@@ -1101,18 +1145,21 @@ TEST(ScaledDotProductAttentionTest, SmallMatrix)
     Output:
     tensor([[[2.5000, 3.5000, 4.5000],
             [2.5000, 3.5000, 4.5000]]])
-    */
+
     ScaledDotProductAttention attn;
     Tensor q, k, v, out;
-    
-    q.shape = {1, 2, 3}; q.data = {1, 0, 1, 0, 1, 0};
-    k.shape = {1, 2, 3}; k.data = {1, 1, 0, 0, 1, 1};
-    v.shape = {1, 2, 3}; v.data = {1, 2, 3, 4, 5, 6};
-    
+
+    q.shape = {1, 2, 3};
+    q.data = {1, 0, 1, 0, 1, 0};
+    k.shape = {1, 2, 3};
+    k.data = {1, 1, 0, 0, 1, 1};
+    v.shape = {1, 2, 3};
+    v.data = {1, 2, 3, 4, 5, 6};
+
     attn.forward(q, k, v, out);
-    
+
     EXPECT_EQ(out.shape, std::vector<size_t>({1, 2, 3}));
-    
+
     EXPECT_NEAR(out.data[0], 2.5f, 1e-6f);
     EXPECT_NEAR(out.data[2], 4.5f, 1e-6f);
     EXPECT_NEAR(out.data[4], 3.5f, 1e-6f);
@@ -1122,15 +1169,18 @@ TEST(ScaledDotProductAttentionTest, BatchProcessing)
 {
     ScaledDotProductAttention attn;
     Tensor q, k, v, out;
-    
-    q.shape = {2, 2, 3}; q.data = {1,0,1, 0,1,0, 1,1,0, 0,0,1};
-    k.shape = {2, 2, 3}; k.data = {1,1,0, 0,1,1, 1,0,1, 0,1,0};
-    v.shape = {2, 2, 3}; v.data = {1,2,3, 4,5,6, 7,8,9, 10,11,12};
-    
+
+    q.shape = {2, 2, 3};
+    q.data = {1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 1};
+    k.shape = {2, 2, 3};
+    k.data = {1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0};
+    v.shape = {2, 2, 3};
+    v.data = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+
     attn.forward(q, k, v, out);
-    
+
     EXPECT_EQ(out.shape, std::vector<size_t>({2, 2, 3}));
-    
+
     EXPECT_EQ(out.data.size(), 12);
 }
 
@@ -1138,11 +1188,14 @@ TEST(ScaledDotProductAttentionTest, DimensionMismatch)
 {
     ScaledDotProductAttention attn;
     Tensor q, k, v, out;
-    
-    q.shape = {1, 2, 3}; q.resize();
-    k.shape = {1, 4, 3}; k.resize();
-    v.shape = {1, 2, 3}; v.resize();
-    
+
+    q.shape = {1, 2, 3};
+    q.resize();
+    k.shape = {1, 4, 3};
+    k.resize();
+    v.shape = {1, 2, 3};
+    v.resize();
+
     EXPECT_THROW(attn.forward(q, k, v, out), std::invalid_argument);
 }
 
@@ -1150,11 +1203,14 @@ TEST(ScaledDotProductAttentionTest, DifferentBatchSizes)
 {
     ScaledDotProductAttention attn;
     Tensor q, k, v, out;
-    
-    q.shape = {2, 2, 3}; q.resize();
-    k.shape = {3, 2, 3}; k.resize();
-    v.shape = {2, 2, 3}; v.resize();
-    
+
+    q.shape = {2, 2, 3};
+    q.resize();
+    k.shape = {3, 2, 3};
+    k.resize();
+    v.shape = {2, 2, 3};
+    v.resize();
+
     EXPECT_THROW(attn.forward(q, k, v, out), std::invalid_argument);
 }
 
@@ -1163,12 +1219,15 @@ TEST(ScaledDotProductAttentionTest, LargeValues)
     ScaledDotProductAttention attn;
     Tensor q, k, v, out;
 
-    q.shape = {1, 2, 2}; q.data = {1000, 1000, 1000, 1000};
-    k.shape = {1, 2, 2}; k.data = {1000, 1000, 1000, 1000};
-    v.shape = {1, 2, 2}; v.data = {1, 2, 3, 4};
-    
+    q.shape = {1, 2, 2};
+    q.data = {1000, 1000, 1000, 1000};
+    k.shape = {1, 2, 2};
+    k.data = {1000, 1000, 1000, 1000};
+    v.shape = {1, 2, 2};
+    v.data = {1, 2, 3, 4};
+
     EXPECT_NO_THROW(attn.forward(q, k, v, out));
-    
+
     for (float val : out.data)
     {
         EXPECT_FALSE(std::isnan(val));
@@ -1180,16 +1239,16 @@ TEST(ScaledDotProductAttentionTest, ScaleFactor)
 {
     ScaledDotProductAttention attn;
     Tensor q, k, v, out;
-    
+
     q.shape = {1, 1, 10};
     k.shape = {1, 1, 10};
     v.shape = {1, 1, 10};
     q.data.resize(10, 1.0f);
     k.data.resize(10, 1.0f);
     v.data.resize(10, 1.0f);
-    
+
     attn.forward(q, k, v, out);
-    
+
     EXPECT_NEAR(out.data[0], 1.0f, 0.5f);
 }
 
@@ -1206,15 +1265,18 @@ TEST(MultiHeadAttentionTest, BasicForwardPass)
     Tensor v;
     v.shape = {2, 3, d_model};
 
-    q.resize(); std::iota(q.data.begin(), q.data.end(), 0.1f);
-    k.resize(); std::iota(k.data.begin(), k.data.end(), 0.2f);
-    v.resize(); std::iota(v.data.begin(), v.data.end(), 0.3f);
-    
+    q.resize();
+    std::iota(q.data.begin(), q.data.end(), 0.1f);
+    k.resize();
+    std::iota(k.data.begin(), k.data.end(), 0.2f);
+    v.resize();
+    std::iota(v.data.begin(), v.data.end(), 0.3f);
+
     Tensor out;
     EXPECT_NO_THROW(mha.forward(q, k, v, out));
-    
+
     EXPECT_EQ(out.shape, std::vector<size_t>({2, 3, d_model}));
-    
+
     // Проверяем, что выходные значения в разумных пределах
     for (float val : out.data)
     {
@@ -1228,15 +1290,19 @@ TEST(MultiHeadAttentionTest, OutputShapeConsistency)
     const size_t d_model = 12;
     const size_t num_heads = 3;
     MultiHeadAttention mha(d_model, num_heads);
-    
-    Tensor q1; q1.shape = {1, 5, d_model}; q1.resize();
-    Tensor q2; q2.shape = {3, 1, d_model}; q2.resize();
-    
+
+    Tensor q1;
+    q1.shape = {1, 5, d_model};
+    q1.resize();
+    Tensor q2;
+    q2.shape = {3, 1, d_model};
+    q2.resize();
+
     Tensor k = q1.copy(), v = q1.copy(), out;
-    
+
     mha.forward(q1, k, v, out);
     EXPECT_EQ(out.shape, std::vector<size_t>({1, 5, d_model}));
-    
+
     mha.forward(q2, q2, q2, out);
     EXPECT_EQ(out.shape, std::vector<size_t>({3, 1, d_model}));
 }
@@ -1246,12 +1312,18 @@ TEST(MultiHeadAttentionTest, InvalidInputDimensions)
     const size_t d_model = 8;
     const size_t num_heads = 2;
     MultiHeadAttention mha(d_model, num_heads);
-    
-    Tensor q; q.shape = {2, 3, d_model}; q.resize();
-    Tensor k; k.shape = {2, 4, d_model}; k.resize();
-    Tensor v; v.shape = {2, 3, d_model}; v.resize();
+
+    Tensor q;
+    q.shape = {2, 3, d_model};
+    q.resize();
+    Tensor k;
+    k.shape = {2, 4, d_model};
+    k.resize();
+    Tensor v;
+    v.shape = {2, 3, d_model};
+    v.resize();
     Tensor out;
-    
+
     EXPECT_THROW(mha.forward(q, k, v, out), std::invalid_argument);
 }
 
@@ -1265,21 +1337,23 @@ TEST(MultiHeadAttentionTest, SplitAndConcatOperations)
     const size_t d_model = 8;
     const size_t num_heads = 2;
     MultiHeadAttention mha(d_model, num_heads);
-    
-    Tensor t; t.shape = {1, 4, d_model};
+
+    Tensor t;
+    t.shape = {1, 4, d_model};
     t.resize();
     std::iota(t.data.begin(), t.data.end(), 1.0f);
-    
+
     // spit
     Tensor original = t.copy();
     mha.split(t);
-    
-    EXPECT_EQ(t.shape, std::vector<size_t>({1, num_heads, 4, d_model/num_heads}));
-    
+
+    EXPECT_EQ(t.shape,
+              std::vector<size_t>({1, num_heads, 4, d_model / num_heads}));
+
     // concat
     mha.concat(t);
     EXPECT_EQ(t.shape, original.shape);
-    
+
     // Проверяем, что данные не изменились
     for (size_t i = 0; i < original.data.size(); ++i)
     {
@@ -1293,78 +1367,92 @@ TEST(MultiHeadAttentionTest, BasicBackwardPass)
     const size_t num_heads = 2;
     const size_t batch_size = 2;
     const size_t seq_len = 3;
-    
+
     MultiHeadAttention mha(d_model, num_heads);
-    
+
     // Инициализация входных тензоров
     Tensor q, k, v;
-    q.shape = {batch_size, seq_len, d_model}; q.resize();
-    k.shape = {batch_size, seq_len, d_model}; k.resize();
-    v.shape = {batch_size, seq_len, d_model}; v.resize();
-    
+    q.shape = {batch_size, seq_len, d_model};
+    q.resize();
+    k.shape = {batch_size, seq_len, d_model};
+    k.resize();
+    v.shape = {batch_size, seq_len, d_model};
+    v.resize();
+
     std::iota(q.data.begin(), q.data.end(), 0.1f);
     std::iota(k.data.begin(), k.data.end(), 0.2f);
     std::iota(v.data.begin(), v.data.end(), 0.3f);
-    
+
     // Прямой проход
     Tensor out;
     mha.forward(q, k, v, out);
-    
+
     // Подготовка градиентов
     out.grad.resize(out.data.size(), 1.0f); // Устанавливаем градиент в 1
-    
+
     Tensor dq, dk, dv;
-    dq.shape = q.shape; dq.resize_grad();
-    dk.shape = k.shape; dk.resize_grad();
-    dv.shape = v.shape; dv.resize_grad();
-    
+    dq.shape = q.shape;
+    dq.resize_grad();
+    dk.shape = k.shape;
+    dk.resize_grad();
+    dv.shape = v.shape;
+    dv.resize_grad();
+
     // Обратный проход
     EXPECT_NO_THROW(mha.backward(out, dq, dk, dv));
-    
+
     // Проверка градиентов
     EXPECT_EQ(dq.grad.size(), q.data.size());
     EXPECT_EQ(dk.grad.size(), k.data.size());
     EXPECT_EQ(dv.grad.size(), v.data.size());
-    
+
     // Проверка, что градиенты не нулевые
-    EXPECT_FALSE(std::all_of(dq.grad.begin(), dq.grad.end(), [](float g) { return g == 0.0f; }));
-    EXPECT_FALSE(std::all_of(dk.grad.begin(), dk.grad.end(), [](float g) { return g == 0.0f; }));
-    EXPECT_FALSE(std::all_of(dv.grad.begin(), dv.grad.end(), [](float g) { return g == 0.0f; }));
+    EXPECT_FALSE(std::all_of(dq.grad.begin(), dq.grad.end(),
+                             [](float g) { return g == 0.0f; }));
+    EXPECT_FALSE(std::all_of(dk.grad.begin(), dk.grad.end(),
+                             [](float g) { return g == 0.0f; }));
+    EXPECT_FALSE(std::all_of(dv.grad.begin(), dv.grad.end(),
+                             [](float g) { return g == 0.0f; }));
 }
 
 TEST(MultiHeadAttentionTest, WeightGradients)
 {
     const size_t d_model = 12;
     const size_t num_heads = 3;
-    
+
     MultiHeadAttention mha(d_model, num_heads);
-    
-    Tensor q; q.shape = {1, 5, d_model}; q.resize();
+
+    Tensor q;
+    q.shape = {1, 5, d_model};
+    q.resize();
     Tensor k = q.copy(), v = q.copy(), out;
-    
+
     mha.forward(q, k, v, out);
-    
+
     // Сохраняем исходные веса
     auto w_q_before = mha.w_q.weight.data;
     auto w_k_before = mha.w_k.weight.data;
     auto w_v_before = mha.w_v.weight.data;
     auto w_concat_before = mha.w_concat.weight.data;
-    
+
     // Обратный проход
     out.grad.resize(out.data.size(), 1.0f);
     Tensor dq, dk, dv;
-    dq.shape = q.shape; dq.resize_grad();
-    dk.shape = k.shape; dk.resize_grad();
-    dv.shape = v.shape; dv.resize_grad();
-    
+    dq.shape = q.shape;
+    dq.resize_grad();
+    dk.shape = k.shape;
+    dk.resize_grad();
+    dv.shape = v.shape;
+    dv.resize_grad();
+
     mha.backward(out, dq, dk, dv);
-    
+
     // Проверка, что веса не изменились
     EXPECT_EQ(mha.w_q.weight.data, w_q_before);
     EXPECT_EQ(mha.w_k.weight.data, w_k_before);
     EXPECT_EQ(mha.w_v.weight.data, w_v_before);
     EXPECT_EQ(mha.w_concat.weight.data, w_concat_before);
-    
+
     // Проверка, что градиенты весов изменились
     EXPECT_FALSE(mha.w_q.weight.grad.empty());
     EXPECT_FALSE(mha.w_k.weight.grad.empty());
@@ -1376,56 +1464,67 @@ TEST(MultiHeadAttentionTest, MultipleBackwardCalls)
 {
     const size_t d_model = 16;
     const size_t num_heads = 4;
-    
+
     MultiHeadAttention mha(d_model, num_heads);
-    
-    Tensor q; q.shape = {1, 4, d_model}; q.resize();
+
+    Tensor q;
+    q.shape = {1, 4, d_model};
+    q.resize();
     Tensor k = q.copy(), v = q.copy(), out;
-    
+
     std::iota(q.data.begin(), q.data.end(), 0.1f);
-    
+
     mha.forward(q, k, v, out);
-    
+
     // Первый обратный проход
     out.grad.resize(out.data.size(), 1.0f);
     Tensor dq1, dk1, dv1;
-    dq1.shape = q.shape; dq1.resize_grad();
-    dk1.shape = k.shape; dk1.resize_grad();
-    dv1.shape = v.shape; dv1.resize_grad();
-    
+    dq1.shape = q.shape;
+    dq1.resize_grad();
+    dk1.shape = k.shape;
+    dk1.resize_grad();
+    dv1.shape = v.shape;
+    dv1.resize_grad();
+
     mha.backward(out, dq1, dk1, dv1);
-    
+
     // Второй обратный проход с другими градиентами
-    for (size_t i = 0; i < out.grad.size(); ++i) {
+    for (size_t i = 0; i < out.grad.size(); ++i)
+    {
         out.grad[i] = (i % 2 + 1) * 0.5f;
     }
-    
+
     Tensor dq2, dk2, dv2;
-    dq2.shape = q.shape; dq2.resize_grad();
-    dk2.shape = k.shape; dk2.resize_grad();
-    dv2.shape = v.shape; dv2.resize_grad();
-    
+    dq2.shape = q.shape;
+    dq2.resize_grad();
+    dk2.shape = k.shape;
+    dk2.resize_grad();
+    dv2.shape = v.shape;
+    dv2.resize_grad();
+
     mha.backward(out, dq2, dk2, dv2);
-    
+
     // Проверка, что градиенты разные при разных входных градиентах
     EXPECT_NE(dq1.grad, dq2.grad);
     EXPECT_NE(dk1.grad, dk2.grad);
     EXPECT_NE(dv1.grad, dv2.grad);
 }
 
-
 #include "ttie/ttie.h"
+#include <cmath>
 #include <gtest/gtest.h>
 #include <random>
-#include <cmath>
 
 // Вспомогательная функция для вычисления MSE Loss
-float compute_mse_loss(const Tensor& output, const Tensor& target) {
-    if (output.data.size() != target.data.size()) {
+float compute_mse_loss(const Tensor &output, const Tensor &target)
+{
+    if (output.data.size() != target.data.size())
+    {
         throw std::invalid_argument("Output and target sizes do not match");
     }
     float sum_sq_diff = 0.0f;
-    for (size_t i = 0; i < output.data.size(); ++i) {
+    for (size_t i = 0; i < output.data.size(); ++i)
+    {
         float diff = output.data[i] - target.data[i];
         sum_sq_diff += diff * diff;
     }
@@ -1433,10 +1532,14 @@ float compute_mse_loss(const Tensor& output, const Tensor& target) {
 }
 
 // Вспомогательная функция для обновления параметров (градиентный спуск)
-void update_parameters(const std::vector<Tensor*>& params, float learning_rate) {
-    for (Tensor* param : params) {
-        if (!param->grad.empty()) {
-            for (size_t i = 0; i < param->data.size(); ++i) {
+void update_parameters(const std::vector<Tensor *> &params, float learning_rate)
+{
+    for (Tensor *param : params)
+    {
+        if (!param->grad.empty())
+        {
+            for (size_t i = 0; i < param->data.size(); ++i)
+            {
                 param->data[i] -= learning_rate * param->grad[i];
             }
         }
@@ -1444,7 +1547,8 @@ void update_parameters(const std::vector<Tensor*>& params, float learning_rate) 
 }
 
 // Тесты для BatchNorm1d
-TEST(BatchNorm1dTest, Initialization) {
+TEST(BatchNorm1dTest, Initialization)
+{
     BatchNorm1d bn(64, 1e-5, 0.1, true, true);
     EXPECT_EQ(bn.to_string(), "BatchNorm1d(64)");
     EXPECT_EQ(bn.parameters().size(), 2); // gamma и beta
@@ -1454,7 +1558,8 @@ TEST(BatchNorm1dTest, Initialization) {
     EXPECT_FALSE(bn.parameters()[1]->data.empty());
 }
 
-TEST(BatchNorm1dTest, ForwardValidInput) {
+TEST(BatchNorm1dTest, ForwardValidInput)
+{
     BatchNorm1d bn(2, 1e-5, 0.1, true, true);
     Tensor input;
     input.shape = {4, 2}; // [batch_size, num_features]
@@ -1466,24 +1571,29 @@ TEST(BatchNorm1dTest, ForwardValidInput) {
 
     // Проверяем параметры gamma и beta
     std::cout << "BatchNorm1d gamma: ";
-    for (float g : bn.parameters()[0]->data) std::cout << g << " ";
+    for (float g : bn.parameters()[0]->data)
+        std::cout << g << " ";
     std::cout << "\nBatchNorm1d beta: ";
-    for (float b : bn.parameters()[1]->data) std::cout << b << " ";
+    for (float b : bn.parameters()[1]->data)
+        std::cout << b << " ";
     std::cout << "\n";
 
     // Проверяем нормализацию по батчу для каждого канала
     size_t batch_size = input.shape[0];
     size_t num_features = input.shape[1];
-    for (size_t f = 0; f < num_features; ++f) {
+    for (size_t f = 0; f < num_features; ++f)
+    {
         // Вычисляем среднее и дисперсию по батчу для канала f
         float mean = 0.0f;
-        for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t b = 0; b < batch_size; ++b)
+        {
             mean += input.data[b * num_features + f];
         }
         mean /= batch_size;
 
         float var = 0.0f;
-        for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t b = 0; b < batch_size; ++b)
+        {
             float diff = input.data[b * num_features + f] - mean;
             var += diff * diff;
         }
@@ -1494,7 +1604,8 @@ TEST(BatchNorm1dTest, ForwardValidInput) {
         float beta = bn.parameters()[1]->data[f];
 
         // Проверяем, что выход соответствует нормализации
-        for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t b = 0; b < batch_size; ++b)
+        {
             float x = input.data[b * num_features + f];
             float x_hat = (x - mean) * inv_std;
             float expected_output = gamma * x_hat + beta;
@@ -1504,7 +1615,8 @@ TEST(BatchNorm1dTest, ForwardValidInput) {
     }
 }
 
-TEST(BatchNorm1dTest, ForwardInvalidInputShape) {
+TEST(BatchNorm1dTest, ForwardInvalidInputShape)
+{
     BatchNorm1d bn(2);
     Tensor input;
     input.shape = {4, 3}; // неправильное число каналов
@@ -1513,7 +1625,8 @@ TEST(BatchNorm1dTest, ForwardInvalidInputShape) {
     EXPECT_THROW(bn.forward(input, output), std::invalid_argument);
 }
 
-TEST(BatchNorm1dTest, BackwardValidInput) {
+TEST(BatchNorm1dTest, BackwardValidInput)
+{
     BatchNorm1d bn(2, 1e-5, 0.1, true, true);
     Tensor input;
     input.shape = {4, 2};
@@ -1534,7 +1647,8 @@ TEST(BatchNorm1dTest, BackwardValidInput) {
     EXPECT_FALSE(bn.parameters()[1]->grad.empty());
 }
 
-TEST(BatchNorm1dTest, BackwardWithoutForward) {
+TEST(BatchNorm1dTest, BackwardWithoutForward)
+{
     BatchNorm1d bn(2);
     Tensor grad_output;
     grad_output.shape = {4, 2};
@@ -1545,8 +1659,8 @@ TEST(BatchNorm1dTest, BackwardWithoutForward) {
     EXPECT_THROW(bn.backward(grad_output, grad_input), std::runtime_error);
 }
 
-
-TEST(BatchNorm1dTest, BackwardGradientDescent) {
+TEST(BatchNorm1dTest, BackwardGradientDescent)
+{
     BatchNorm1d bn(2, 1e-5, 0.1, true, true);
     Tensor input;
     input.shape = {4, 2};
@@ -1565,11 +1679,13 @@ TEST(BatchNorm1dTest, BackwardGradientDescent) {
     float initial_loss = 0.0f;
 
     // Выполняем градиентный спуск
-    for (int iter = 0; iter < num_iterations; ++iter) {
+    for (int iter = 0; iter < num_iterations; ++iter)
+    {
         Tensor output;
         bn.forward(input, output);
         float loss = compute_mse_loss(output, target);
-        if (iter == 0) {
+        if (iter == 0)
+        {
             initial_loss = loss;
         }
 
@@ -1577,8 +1693,10 @@ TEST(BatchNorm1dTest, BackwardGradientDescent) {
         grad_output.shape = output.shape;
         grad_output.resize();
         grad_output.resize_grad();
-        for (size_t i = 0; i < output.data.size(); ++i) {
-            grad_output.grad[i] = 2.0f * (output.data[i] - target.data[i]) / output.data.size();
+        for (size_t i = 0; i < output.data.size(); ++i)
+        {
+            grad_output.grad[i] =
+                2.0f * (output.data[i] - target.data[i]) / output.data.size();
         }
 
         Tensor grad_input;
@@ -1588,7 +1706,8 @@ TEST(BatchNorm1dTest, BackwardGradientDescent) {
         update_parameters(bn.parameters(), learning_rate);
 
         // Очищаем градиенты
-        for (Tensor* param : bn.parameters()) {
+        for (Tensor *param : bn.parameters())
+        {
             std::fill(param->grad.begin(), param->grad.end(), 0.0f);
         }
     }
@@ -1600,9 +1719,9 @@ TEST(BatchNorm1dTest, BackwardGradientDescent) {
     EXPECT_LT(final_loss, initial_loss);
 }
 
-
 // Тесты для BatchNorm2d
-TEST(BatchNorm2dTest, Initialization) {
+TEST(BatchNorm2dTest, Initialization)
+{
     BatchNorm2d bn(32, 1e-5, 0.1, true, true);
     EXPECT_EQ(bn.to_string(), "BatchNorm2d(32)");
     EXPECT_EQ(bn.parameters().size(), 2); // gamma и beta
@@ -1612,12 +1731,14 @@ TEST(BatchNorm2dTest, Initialization) {
     EXPECT_FALSE(bn.parameters()[1]->data.empty());
 }
 
-TEST(BatchNorm2dTest, ForwardValidInput) {
+TEST(BatchNorm2dTest, ForwardValidInput)
+{
     BatchNorm2d bn(2, 1e-5, 0.1, true, true);
     Tensor input;
     input.shape = {2, 2, 3, 3}; // [N, C, H, W]
     input.resize();
-    for (size_t i = 0; i < input.size(); ++i) {
+    for (size_t i = 0; i < input.size(); ++i)
+    {
         input.data[i] = static_cast<float>(i % 5 + 1);
     }
     Tensor output;
@@ -1626,9 +1747,11 @@ TEST(BatchNorm2dTest, ForwardValidInput) {
 
     // Проверяем параметры gamma и beta
     std::cout << "BatchNorm2d gamma: ";
-    for (float g : bn.parameters()[0]->data) std::cout << g << " ";
+    for (float g : bn.parameters()[0]->data)
+        std::cout << g << " ";
     std::cout << "\nBatchNorm2d beta: ";
-    for (float b : bn.parameters()[1]->data) std::cout << b << " ";
+    for (float b : bn.parameters()[1]->data)
+        std::cout << b << " ";
     std::cout << "\n";
 
     // Проверяем нормализацию по батчу для каждого канала
@@ -1638,11 +1761,15 @@ TEST(BatchNorm2dTest, ForwardValidInput) {
     size_t W = input.shape[3];
     size_t count = N * H * W;
 
-    for (size_t c = 0; c < C; ++c) {
+    for (size_t c = 0; c < C; ++c)
+    {
         float mean = 0.0f;
-        for (size_t n = 0; n < N; ++n) {
-            for (size_t h = 0; h < H; ++h) {
-                for (size_t w = 0; w < W; ++w) {
+        for (size_t n = 0; n < N; ++n)
+        {
+            for (size_t h = 0; h < H; ++h)
+            {
+                for (size_t w = 0; w < W; ++w)
+                {
                     size_t idx = n * C * H * W + c * H * W + h * W + w;
                     mean += input.data[idx];
                 }
@@ -1651,9 +1778,12 @@ TEST(BatchNorm2dTest, ForwardValidInput) {
         mean /= count;
 
         float var = 0.0f;
-        for (size_t n = 0; n < N; ++n) {
-            for (size_t h = 0; h < H; ++h) {
-                for (size_t w = 0; w < W; ++w) {
+        for (size_t n = 0; n < N; ++n)
+        {
+            for (size_t h = 0; h < H; ++h)
+            {
+                for (size_t w = 0; w < W; ++w)
+                {
                     size_t idx = n * C * H * W + c * H * W + h * W + w;
                     float diff = input.data[idx] - mean;
                     var += diff * diff;
@@ -1666,9 +1796,12 @@ TEST(BatchNorm2dTest, ForwardValidInput) {
         float gamma = bn.parameters()[0]->data[c];
         float beta = bn.parameters()[1]->data[c];
 
-        for (size_t n = 0; n < N; ++n) {
-            for (size_t h = 0; h < H; ++h) {
-                for (size_t w = 0; w < W; ++w) {
+        for (size_t n = 0; n < N; ++n)
+        {
+            for (size_t h = 0; h < H; ++h)
+            {
+                for (size_t w = 0; w < W; ++w)
+                {
                     size_t idx = n * C * H * W + c * H * W + h * W + w;
                     float x = input.data[idx];
                     float x_hat = (x - mean) * inv_std;
@@ -1681,7 +1814,8 @@ TEST(BatchNorm2dTest, ForwardValidInput) {
     }
 }
 
-TEST(BatchNorm2dTest, ForwardInvalidInputShape) {
+TEST(BatchNorm2dTest, ForwardInvalidInputShape)
+{
     BatchNorm2d bn(2);
     Tensor input;
     input.shape = {2, 3, 3, 3}; // неправильное число каналов
@@ -1690,7 +1824,8 @@ TEST(BatchNorm2dTest, ForwardInvalidInputShape) {
     EXPECT_THROW(bn.forward(input, output), std::invalid_argument);
 }
 
-TEST(BatchNorm2dTest, BackwardValidInput) {
+TEST(BatchNorm2dTest, BackwardValidInput)
+{
     BatchNorm2d bn(2, 1e-5, 0.1, true, true);
     Tensor input;
     input.shape = {2, 2, 3, 3};
@@ -1711,7 +1846,8 @@ TEST(BatchNorm2dTest, BackwardValidInput) {
     EXPECT_FALSE(bn.parameters()[1]->grad.empty());
 }
 
-TEST(BatchNorm2dTest, BackwardInvalidGradOutput) {
+TEST(BatchNorm2dTest, BackwardInvalidGradOutput)
+{
     BatchNorm2d bn(2);
     Tensor input;
     input.shape = {2, 2, 3, 3};
@@ -1727,8 +1863,8 @@ TEST(BatchNorm2dTest, BackwardInvalidGradOutput) {
     EXPECT_THROW(bn.backward(grad_output, grad_input), std::invalid_argument);
 }
 
-
-TEST(BatchNorm2dTest, BackwardGradientDescent) {
+TEST(BatchNorm2dTest, BackwardGradientDescent)
+{
     BatchNorm2d bn(2, 1e-5, 0.1, true, true);
     Tensor input;
     input.shape = {2, 2, 3, 3};
@@ -1746,11 +1882,13 @@ TEST(BatchNorm2dTest, BackwardGradientDescent) {
     int num_iterations = 10;
     float initial_loss = 0.0f;
 
-    for (int iter = 0; iter < num_iterations; ++iter) {
+    for (int iter = 0; iter < num_iterations; ++iter)
+    {
         Tensor output;
         bn.forward(input, output);
         float loss = compute_mse_loss(output, target);
-        if (iter == 0) {
+        if (iter == 0)
+        {
             initial_loss = loss;
         }
 
@@ -1758,8 +1896,10 @@ TEST(BatchNorm2dTest, BackwardGradientDescent) {
         grad_output.shape = output.shape;
         grad_output.resize();
         grad_output.resize_grad();
-        for (size_t i = 0; i < output.data.size(); ++i) {
-            grad_output.grad[i] = 2.0f * (output.data[i] - target.data[i]) / output.data.size();
+        for (size_t i = 0; i < output.data.size(); ++i)
+        {
+            grad_output.grad[i] =
+                2.0f * (output.data[i] - target.data[i]) / output.data.size();
         }
 
         Tensor grad_input;
@@ -1767,7 +1907,8 @@ TEST(BatchNorm2dTest, BackwardGradientDescent) {
 
         update_parameters(bn.parameters(), learning_rate);
 
-        for (Tensor* param : bn.parameters()) {
+        for (Tensor *param : bn.parameters())
+        {
             std::fill(param->grad.begin(), param->grad.end(), 0.0f);
         }
     }
@@ -1779,7 +1920,8 @@ TEST(BatchNorm2dTest, BackwardGradientDescent) {
 }
 
 // Тесты для BatchNorm3d
-TEST(BatchNorm3dTest, Initialization) {
+TEST(BatchNorm3dTest, Initialization)
+{
     BatchNorm3d bn(16, 1e-5, 0.1, true, true);
     EXPECT_EQ(bn.to_string(), "BatchNorm3d(16)");
     EXPECT_EQ(bn.parameters().size(), 2); // gamma и beta
@@ -1789,12 +1931,14 @@ TEST(BatchNorm3dTest, Initialization) {
     EXPECT_FALSE(bn.parameters()[1]->data.empty());
 }
 
-TEST(BatchNorm3dTest, ForwardValidInput) {
+TEST(BatchNorm3dTest, ForwardValidInput)
+{
     BatchNorm3d bn(2, 1e-5, 0.1, true, true);
     Tensor input;
     input.shape = {2, 2, 3, 3, 3}; // [N, C, D, H, W]
     input.resize();
-    for (size_t i = 0; i < input.size(); ++i) {
+    for (size_t i = 0; i < input.size(); ++i)
+    {
         input.data[i] = static_cast<float>(i % 5 + 1);
     }
     Tensor output;
@@ -1803,9 +1947,11 @@ TEST(BatchNorm3dTest, ForwardValidInput) {
 
     // Проверяем параметры gamma и beta
     std::cout << "BatchNorm3d gamma: ";
-    for (float g : bn.parameters()[0]->data) std::cout << g << " ";
+    for (float g : bn.parameters()[0]->data)
+        std::cout << g << " ";
     std::cout << "\nBatchNorm3d beta: ";
-    for (float b : bn.parameters()[1]->data) std::cout << b << " ";
+    for (float b : bn.parameters()[1]->data)
+        std::cout << b << " ";
     std::cout << "\n";
 
     // Проверяем нормализацию по батчу для каждого канала
@@ -1816,13 +1962,19 @@ TEST(BatchNorm3dTest, ForwardValidInput) {
     size_t W = input.shape[4];
     size_t count = N * D * H * W;
 
-    for (size_t c = 0; c < C; ++c) {
+    for (size_t c = 0; c < C; ++c)
+    {
         float mean = 0.0f;
-        for (size_t n = 0; n < N; ++n) {
-            for (size_t d = 0; d < D; ++d) {
-                for (size_t h = 0; h < H; ++h) {
-                    for (size_t w = 0; w < W; ++w) {
-                        size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+        for (size_t n = 0; n < N; ++n)
+        {
+            for (size_t d = 0; d < D; ++d)
+            {
+                for (size_t h = 0; h < H; ++h)
+                {
+                    for (size_t w = 0; w < W; ++w)
+                    {
+                        size_t idx = n * C * D * H * W + c * D * H * W +
+                                     d * H * W + h * W + w;
                         mean += input.data[idx];
                     }
                 }
@@ -1831,11 +1983,16 @@ TEST(BatchNorm3dTest, ForwardValidInput) {
         mean /= count;
 
         float var = 0.0f;
-        for (size_t n = 0; n < N; ++n) {
-            for (size_t d = 0; d < D; ++d) {
-                for (size_t h = 0; h < H; ++h) {
-                    for (size_t w = 0; w < W; ++w) {
-                        size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+        for (size_t n = 0; n < N; ++n)
+        {
+            for (size_t d = 0; d < D; ++d)
+            {
+                for (size_t h = 0; h < H; ++h)
+                {
+                    for (size_t w = 0; w < W; ++w)
+                    {
+                        size_t idx = n * C * D * H * W + c * D * H * W +
+                                     d * H * W + h * W + w;
                         float diff = input.data[idx] - mean;
                         var += diff * diff;
                     }
@@ -1848,11 +2005,16 @@ TEST(BatchNorm3dTest, ForwardValidInput) {
         float gamma = bn.parameters()[0]->data[c];
         float beta = bn.parameters()[1]->data[c];
 
-        for (size_t n = 0; n < N; ++n) {
-            for (size_t d = 0; d < D; ++d) {
-                for (size_t h = 0; h < H; ++h) {
-                    for (size_t w = 0; w < W; ++w) {
-                        size_t idx = n * C * D * H * W + c * D * H * W + d * H * W + h * W + w;
+        for (size_t n = 0; n < N; ++n)
+        {
+            for (size_t d = 0; d < D; ++d)
+            {
+                for (size_t h = 0; h < H; ++h)
+                {
+                    for (size_t w = 0; w < W; ++w)
+                    {
+                        size_t idx = n * C * D * H * W + c * D * H * W +
+                                     d * H * W + h * W + w;
                         float x = input.data[idx];
                         float x_hat = (x - mean) * inv_std;
                         float expected_output = gamma * x_hat + beta;
@@ -1865,8 +2027,8 @@ TEST(BatchNorm3dTest, ForwardValidInput) {
     }
 }
 
-
-TEST(BatchNorm3dTest, ForwardInvalidInputShape) {
+TEST(BatchNorm3dTest, ForwardInvalidInputShape)
+{
     BatchNorm3d bn(2);
     Tensor input;
     input.shape = {2, 3, 3, 3, 3}; // неправильное число каналов
@@ -1875,7 +2037,8 @@ TEST(BatchNorm3dTest, ForwardInvalidInputShape) {
     EXPECT_THROW(bn.forward(input, output), std::invalid_argument);
 }
 
-TEST(BatchNorm3dTest, BackwardValidInput) {
+TEST(BatchNorm3dTest, BackwardValidInput)
+{
     BatchNorm3d bn(2, 1e-5, 0.1, true, true);
     Tensor input;
     input.shape = {2, 2, 3, 3, 3};
@@ -1896,7 +2059,8 @@ TEST(BatchNorm3dTest, BackwardValidInput) {
     EXPECT_FALSE(bn.parameters()[1]->grad.empty());
 }
 
-TEST(BatchNorm3dTest, BackwardWithoutForward) {
+TEST(BatchNorm3dTest, BackwardWithoutForward)
+{
     BatchNorm3d bn(2);
     Tensor grad_output;
     grad_output.shape = {2, 2, 3, 3, 3};
@@ -1907,9 +2071,8 @@ TEST(BatchNorm3dTest, BackwardWithoutForward) {
     EXPECT_THROW(bn.backward(grad_output, grad_input), std::runtime_error);
 }
 
-
-
-TEST(BatchNorm3dTest, BackwardGradientDescent) {
+TEST(BatchNorm3dTest, BackwardGradientDescent)
+{
     BatchNorm3d bn(2, 1e-5, 0.1, true, true);
     Tensor input;
     input.shape = {2, 2, 3, 3, 3};
@@ -1927,11 +2090,13 @@ TEST(BatchNorm3dTest, BackwardGradientDescent) {
     int num_iterations = 10;
     float initial_loss = 0.0f;
 
-    for (int iter = 0; iter < num_iterations; ++iter) {
+    for (int iter = 0; iter < num_iterations; ++iter)
+    {
         Tensor output;
         bn.forward(input, output);
         float loss = compute_mse_loss(output, target);
-        if (iter == 0) {
+        if (iter == 0)
+        {
             initial_loss = loss;
         }
 
@@ -1939,8 +2104,10 @@ TEST(BatchNorm3dTest, BackwardGradientDescent) {
         grad_output.shape = output.shape;
         grad_output.resize();
         grad_output.resize_grad();
-        for (size_t i = 0; i < output.data.size(); ++i) {
-            grad_output.grad[i] = 2.0f * (output.data[i] - target.data[i]) / output.data.size();
+        for (size_t i = 0; i < output.data.size(); ++i)
+        {
+            grad_output.grad[i] =
+                2.0f * (output.data[i] - target.data[i]) / output.data.size();
         }
 
         Tensor grad_input;
@@ -1948,7 +2115,8 @@ TEST(BatchNorm3dTest, BackwardGradientDescent) {
 
         update_parameters(bn.parameters(), learning_rate);
 
-        for (Tensor* param : bn.parameters()) {
+        for (Tensor *param : bn.parameters())
+        {
             std::fill(param->grad.begin(), param->grad.end(), 0.0f);
         }
     }
@@ -1958,11 +2126,7 @@ TEST(BatchNorm3dTest, BackwardGradientDescent) {
     float final_loss = compute_mse_loss(final_output, target);
     EXPECT_LT(final_loss, initial_loss);
 }
-
-
-
-
-
+*/
 int main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
