@@ -798,7 +798,6 @@ TEST(LSTMTest, ForwardAndBackwardVSTorch) // LSTM forward and backward propagati
     }
 }
 
-/*
 
 TEST(TensorTransposeTest, BasicTransposition)
 {
@@ -843,7 +842,7 @@ TEST(TensorTransposeTest, HigherDimTransposition)
     tensor(13)
     tensor(9)
     tensor(24)
-
+*/
 
     Tensor t;
     t.shape = {2, 3, 4};
@@ -941,7 +940,7 @@ TEST(TensorMatMulTest, BatchMatrixMultiplication)
 
             [[220, 244],
             [301, 334]]])
-
+*/
     Tensor a;
     a.shape = {2, 2, 3};
     a.data = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
@@ -1145,7 +1144,7 @@ TEST(ScaledDotProductAttentionTest, SmallMatrix)
     Output:
     tensor([[[2.5000, 3.5000, 4.5000],
             [2.5000, 3.5000, 4.5000]]])
-
+*/
     ScaledDotProductAttention attn;
     Tensor q, k, v, out;
 
@@ -2126,7 +2125,7 @@ TEST(BatchNorm3dTest, BackwardGradientDescent)
     float final_loss = compute_mse_loss(final_output, target);
     EXPECT_LT(final_loss, initial_loss);
 }
-*/
+
 int main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
