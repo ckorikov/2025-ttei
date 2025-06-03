@@ -84,15 +84,15 @@ class MatrixMultiplier
 
     // Метод Штрассена (работает только для квадратных матриц, размеры кратны 2)
     std::vector<float> strassen_multiply(const std::vector<float> &A,
-                                         const std::vector<float> &B, int n)
+                                         const std::vector<float> &B, size_t n)
     {
         if (n == 2)
         {
             return strassen_multiply_2x2(A, B);
         }
 
-        int mid = n / 2;
-        int size = mid * mid;
+        size_t mid = n / 2;
+        size_t size = mid * mid;
 
         std::vector<float> A11(size), A12(size), A21(size), A22(size);
         std::vector<float> B11(size), B12(size), B21(size), B22(size);
@@ -102,7 +102,7 @@ class MatrixMultiplier
         {
             for (size_t j = 0; j < mid; ++j)
             {
-                int index = i * mid + j;
+                size_t index = i * mid + j;
                 A11[index] = A[i * n + j];
                 A12[index] = A[i * n + j + mid];
                 A21[index] = A[(i + mid) * n + j];
@@ -130,7 +130,7 @@ class MatrixMultiplier
         {
             for (size_t j = 0; j < mid; ++j)
             {
-                int index = i * mid + j;
+                size_t index = i * mid + j;
                 result[i * n + j] =
                     M5[index] + M4[index] - M2[index] + M6[index];
                 result[i * n + j + mid] = M1[index] + M2[index];
