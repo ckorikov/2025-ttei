@@ -1,7 +1,7 @@
-#include "ttie/ttie.h"
-#include <cmath>
 #include <gtest/gtest.h>
 #include <random>
+#include "ttie/MatrixMultiplier.h"
+#include "ttie/ttie.h"
 
 using namespace ttie;
 
