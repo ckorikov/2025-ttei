@@ -1,6 +1,6 @@
+#include "ttie/ttie.h"
 #include <gtest/gtest.h>
 #include <random>
-#include "ttie/ttie.h"
 
 using namespace ttie;
 

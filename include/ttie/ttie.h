@@ -1,12 +1,12 @@
 #ifndef TTIE_H
 #define TTIE_H
 
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <random>
-#include <algorithm>
-#include <stdexcept>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -251,7 +251,6 @@ class MatrixMultiplier
         return {p5 + p4 - p2 + p6, p1 + p2, p3 + p4, p1 + p5 - p3 - p7};
     }
 };
-
 
 namespace ttie
 {
