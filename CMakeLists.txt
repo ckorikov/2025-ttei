@@ -42,7 +42,7 @@ find_program(CLANG_FORMAT "clang-format")
 if(CLANG_FORMAT)
     set(FORMAT_SOURCE_FILES
         include/ttie/ttie.h
-        include/MatrixMultiplier.h
+        include/ttie/MatrixMultiplier.h
         tests/test_main.cpp
         example/main.cpp
     )

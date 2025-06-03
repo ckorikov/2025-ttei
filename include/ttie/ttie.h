@@ -1,8 +1,6 @@
 #ifndef TTIE_H
 #define TTIE_H
 
-#pragma once
-
 #include <cassert>
 #include <iostream>
 #include <random>
@@ -116,7 +114,6 @@ struct Layer
     virtual ~Layer() {}
 };
 
-
 struct Linear : Layer
 {
     Tensor weight;
@@ -167,8 +164,8 @@ struct Linear : Layer
         }
     }
 
-
-    void forward_with_strassen(const Tensor& input, Tensor& output) {
+    void forward_with_strassen(const Tensor &input, Tensor &output)
+    {
         size_t in_features = weight.shape[0];
         size_t out_features = weight.shape[1];
         output.shape = {input.shape[0], out_features};
@@ -177,34 +174,41 @@ struct Linear : Layer
         // Create matrix multiplier instance
         MatrixMultiplier matmul;
 
-        // Check if we can use Strassen's method (square matrices with size power of 2)
-        bool can_use_strassen = (input.shape[0] == in_features) && 
-                            (in_features == out_features) &&
-                            ((input.shape[0] & (input.shape[0] - 1)) == 0);
+        // Check if we can use Strassen's method (square matrices with size
+        // power of 2)
+        bool can_use_strassen = (input.shape[0] == in_features) &&
+                                (in_features == out_features) &&
+                                ((input.shape[0] & (input.shape[0] - 1)) == 0);
 
-        for (size_t i = 0; i < input.shape[0]; ++i) {
+        for (size_t i = 0; i < input.shape[0]; ++i)
+        {
             // Get current input sample (row vector)
             std::vector<float> input_row(in_features);
-            for (size_t k = 0; k < in_features; ++k) {
+            for (size_t k = 0; k < in_features; ++k)
+            {
                 input_row[k] = input.data[i * in_features + k];
             }
 
             // Multiply using appropriate method
             std::vector<float> multiplied;
-            
+
             // For Strassen, we need to reshape the input to square matrix
             std::vector<float> input_square(input_row.begin(), input_row.end());
-            input_square.resize(in_features * in_features, 0.0f);  // Pad if needed
-            
-            multiplied = matmul.strassen_multiply(input_square, weight.data, in_features);
-            
-            // Extract the first row of the result (since we multiplied by a row vector)
-            for (size_t j = 0; j < out_features; ++j) {
-                output.data[i * out_features + j] = multiplied[j] + bias.data[j];
+            input_square.resize(in_features * in_features,
+                                0.0f); // Pad if needed
+
+            multiplied = matmul.strassen_multiply(input_square, weight.data,
+                                                  in_features);
+
+            // Extract the first row of the result (since we multiplied by a row
+            // vector)
+            for (size_t j = 0; j < out_features; ++j)
+            {
+                output.data[i * out_features + j] =
+                    multiplied[j] + bias.data[j];
             }
         }
-}
-
+    }
 
     void backward(const Tensor &output, Tensor &input) override
     {
@@ -425,4 +429,4 @@ Tensor mse_loss(const Tensor &pred, const Tensor &target)
 
 } // namespace ttie
 
-#endif // TTIE_H
+#endif TTIE_H
