@@ -134,6 +134,240 @@ TEST(LayerTest, Tanh)
     EXPECT_NEAR(input.grad[1], 0.41997434f, 1e-5f); // tanh'(1) ≈ 0.420
 }
 
+TEST(Softmax, SoftmaxBasic)
+{
+    Softmax softmax;
+    Tensor input;
+    input.shape = {3};
+    input.data = {1.0f, 2.0f, 3.0f};
+    input.resize();
+
+    Tensor output;
+    softmax.forward(input, output);
+
+    float sum = output.data[0] + output.data[1] + output.data[2];
+    EXPECT_NEAR(sum, 1.0f, 1e-5f); // Сумма вероятностей должна быть равна 1
+
+    EXPECT_GT(output.data[2], output.data[1]);
+    EXPECT_GT(output.data[1], output.data[0]);
+
+    output.grad = {1.0f, 0.0f, 0.0f};
+    softmax.backward(output, input);
+
+    float grad_sum = input.grad[0] + input.grad[1] + input.grad[2];
+    EXPECT_NEAR(grad_sum, 0.0f,
+                1e-5f); // сумма градиентов Softmax должна быть 0
+}
+
+TEST(Softmax, SoftmaxEqualInputs)
+{
+    Softmax softmax;
+    Tensor input;
+    input.shape = {2};
+    input.data = {0.0f, 0.0f};
+    input.resize();
+
+    Tensor output;
+    softmax.forward(input, output);
+
+    EXPECT_NEAR(output.data[0], 0.5f, 1e-5f);
+    EXPECT_NEAR(output.data[1], 0.5f, 1e-5f);
+
+    output.grad = {1.0f, -1.0f};
+    softmax.backward(output, input);
+
+    EXPECT_NEAR(input.grad[0], 0.5f, 1e-5f);
+    EXPECT_NEAR(input.grad[1], -0.5f, 1e-5f);
+}
+
+TEST(Softmax, SoftmaxSingleLargeInput)
+{
+    Softmax softmax;
+    Tensor input;
+    input.shape = {3};
+    input.data = {-1000.0f, 0.0f, 1000.0f}; // Большая разница
+    input.resize();
+
+    Tensor output;
+    softmax.forward(input, output);
+
+    EXPECT_NEAR(output.data[2], 1.0f,
+                1e-5f); // максимальный элемент должен приблизиться к 1
+    EXPECT_NEAR(output.data[0], 0.0f, 1e-5f);
+    EXPECT_NEAR(output.data[1], 0.0f, 1e-5f);
+
+    output.grad = {0.0f, 0.0f, 1.0f};
+    softmax.backward(output, input);
+
+    EXPECT_NEAR(input.grad[2], 0.0f, 1e-5f);
+    EXPECT_NEAR(input.grad[0], 0.0f, 1e-5f);
+    EXPECT_NEAR(input.grad[1], 0.0f, 1e-5f);
+}
+
+TEST(Softmax, StableSoftmaxLSEExtremeValues)
+{
+    StableSoftmaxLSE softmax;
+
+    Tensor input;
+    input.shape = {5};
+    input.data = {1000.0f, -1000.0f, 0.0f, 500.0f, -500.0f}; // крайние значения
+    input.resize();
+
+    Tensor output;
+    softmax.forward(input, output);
+
+    float sum = std::accumulate(output.data.begin(), output.data.end(), 0.0f);
+    EXPECT_NEAR(sum, 1.0f, 1e-5f);
+
+    for (float val : output.data)
+    {
+        EXPECT_TRUE(std::isfinite(val));
+        EXPECT_GE(val, 0.0f);
+        EXPECT_LE(val, 1.0f);
+    }
+
+    // Самая высокая вероятность у первого элемента (1000)
+    EXPECT_NEAR(output.data[0], 1.0f, 1e-5f);
+    EXPECT_NEAR(output.data[1], 0.0f, 1e-5f);
+    EXPECT_NEAR(output.data[2], 0.0f, 1e-5f);
+    EXPECT_NEAR(output.data[3], 0.0f, 1e-5f);
+    EXPECT_NEAR(output.data[4], 0.0f, 1e-5f);
+
+    output.grad = {1.0f, -1.0f, 0.0f, 0.0f, 0.0f};
+    softmax.backward(output, input);
+
+    for (float grad_val : input.grad)
+    {
+        EXPECT_TRUE(std::isfinite(grad_val));
+    }
+}
+
+TEST(MaxPool1d, ForwardBasic)
+{
+    MaxPool1d pool(2, 2);
+
+    Tensor input;
+    input.shape = {6};
+    input.data = {1, 3, 2, 4, 5, 0};
+    input.resize();
+
+    Tensor output;
+    pool.forward(input, output);
+
+    EXPECT_EQ(output.shape[0], 3);
+    EXPECT_FLOAT_EQ(output.data[0], 3);
+    EXPECT_FLOAT_EQ(output.data[1], 4);
+    EXPECT_FLOAT_EQ(output.data[2], 5);
+}
+
+TEST(MaxPool1d, BackwardBasic)
+{
+    MaxPool1d pool(3, 1);
+
+    Tensor input;
+    input.shape = {5};
+    input.data = {1, 5, 2, 3, 4};
+    input.resize();
+
+    Tensor output;
+    pool.forward(input, output);
+    output.grad = {1, 2, 3};
+
+    pool.backward(output, input);
+
+    EXPECT_FLOAT_EQ(input.grad[0], 0);
+    EXPECT_FLOAT_EQ(input.grad[1], 3);
+    EXPECT_FLOAT_EQ(input.grad[2], 0);
+    EXPECT_FLOAT_EQ(input.grad[3], 0);
+    EXPECT_FLOAT_EQ(input.grad[4], 3);
+}
+
+TEST(QuantizedLinear, ForwardBasic)
+{
+    QuantizedLinear layer(3, 2);
+    layer.init_weights({{0.1f, -0.2f, 0.3f}, {0.4f, 0.5f, -0.6f}},
+                       {0.01f, -0.02f});
+
+    Tensor input;
+    input.shape = {3};
+    input.data = {1.0f, 0.5f, -1.5f};
+    input.resize();
+
+    Tensor output;
+    layer.forward(input, output);
+
+    ASSERT_EQ(output.shape.size(), 1);
+    ASSERT_EQ(output.shape[0], 2);
+    EXPECT_TRUE(std::isfinite(output.data[0]));
+    EXPECT_TRUE(std::isfinite(output.data[1]));
+}
+
+TEST(QuantizedLinear, BackwardBasic)
+{
+    QuantizedLinear layer(2, 2);
+    layer.init_weights({{0.5f, -0.1f}, {-0.3f, 0.7f}}, {0.02f, -0.03f});
+
+    Tensor input;
+    input.shape = {2};
+    input.data = {0.2f, -0.4f};
+    input.resize();
+
+    Tensor output;
+    layer.forward(input, output);
+    output.grad = {1.0f, -1.0f};
+    layer.backward(output, input);
+
+    ASSERT_EQ(input.grad.size(), 2);
+    EXPECT_TRUE(std::isfinite(input.grad[0]));
+    EXPECT_TRUE(std::isfinite(input.grad[1]));
+}
+TEST(QuantizedLinear, LargeIntegrationTest)
+{
+    // Структура: Input -> QuantizedLinear(4->6) -> MaxPool1d(2,2) ->
+    // QuantizedLinear(3->2)
+
+    QuantizedLinear layer1(4, 6);
+    layer1.init_weights({{0.1f, -0.2f, 0.3f, -0.4f},
+                         {0.5f, 0.6f, -0.7f, 0.8f},
+                         {-0.9f, 1.0f, -1.1f, 1.2f},
+                         {1.3f, -1.4f, 1.5f, -1.6f},
+                         {-1.7f, 1.8f, -1.9f, 2.0f},
+                         {2.1f, -2.2f, 2.3f, -2.4f}},
+                        {0.05f, -0.05f, 0.05f, -0.05f, 0.05f, -0.05f});
+
+    MaxPool1d pool(2, 2);
+
+    QuantizedLinear layer2(3, 2);
+    layer2.init_weights({{0.2f, -0.3f, 0.4f}, {-0.5f, 0.6f, -0.7f}},
+                        {0.01f, -0.02f});
+
+    Tensor input;
+    input.shape = {4};
+    input.data = {1.0f, -1.0f, 2.0f, -2.0f};
+    input.resize();
+
+    Tensor output1, output2, final_output;
+
+    layer1.forward(input, output1);
+    pool.forward(output1, output2);
+    layer2.forward(output2, final_output);
+
+    ASSERT_EQ(final_output.shape[0], 2);
+    EXPECT_TRUE(std::isfinite(final_output.data[0]));
+    EXPECT_TRUE(std::isfinite(final_output.data[1]));
+
+    // Проверка backward pass
+    final_output.grad = {1.0f, -1.0f};
+    Tensor grad_pool, grad_input;
+
+    layer2.backward(final_output, output2);
+    pool.backward(output2, output1);
+    layer1.backward(output1, input);
+
+    ASSERT_EQ(input.grad.size(), 4);
+    for (float grad : input.grad)
+        EXPECT_TRUE(std::isfinite(grad));
+}
 TEST(LayerTest, Linear)
 {
     Linear linear(3, 2);
@@ -463,7 +697,8 @@ TEST(LSTMTest, ForwardShapeAndSanity) // Shape of tensors and sanity of outputs
     }
 }
 
-TEST(LSTMTest, ForwardAndBackwardVSTorch) // LSTM forward and backward propagation tests
+TEST(LSTMTest,
+     ForwardAndBackwardVSTorch) // LSTM forward and backward propagation tests
 {
     /*
     # 1 Layer
@@ -482,7 +717,8 @@ TEST(LSTMTest, ForwardAndBackwardVSTorch) // LSTM forward and backward propagati
     ], dtype=torch.float32).unsqueeze(1)
     x.requires_grad_()
 
-    lstm = nn.LSTM(input_dim, hidden_dim, num_layers=num_layers, batch_first=False)
+    lstm = nn.LSTM(input_dim, hidden_dim, num_layers=num_layers,
+    batch_first=False)
 
     weight_ih = torch.tensor([
         [0.5, 0.6],
@@ -798,7 +1034,6 @@ TEST(LSTMTest, ForwardAndBackwardVSTorch) // LSTM forward and backward propagati
     }
 }
 
-
 TEST(TensorTransposeTest, BasicTransposition)
 {
     Tensor t;
@@ -858,7 +1093,6 @@ TEST(TensorTransposeTest, HigherDimTransposition)
     EXPECT_FLOAT_EQ(result.data[4], 9);
     EXPECT_FLOAT_EQ(result.data[23], 24);
 }
-
 
 TEST(TensorTransposeTest, InvalidDimensions)
 {
