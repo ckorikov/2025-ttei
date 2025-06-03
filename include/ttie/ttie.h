@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+namespace ttie
+{
 // Оператор сложения матриц
 std::vector<float> operator+(const std::vector<float> &A,
                              const std::vector<float> &B)
@@ -65,11 +67,11 @@ class MatrixMultiplier
 
         std::vector<float> result(rowsA * colsB, 0.0f);
 
-        for (unsigned int i = 0; i < rowsA; ++i)
+        for (size_t i = 0; i < rowsA; ++i)
         {
-            for (unsigned int j = 0; j < colsB; ++j)
+            for (size_t j = 0; j < colsB; ++j)
             {
-                for (unsigned int k = 0; k < colsA; ++k)
+                for (size_t k = 0; k < colsA; ++k)
                 {
                     result[i * colsB + j] +=
                         A[i * colsA + k] * B[k * colsB + j];
@@ -96,9 +98,9 @@ class MatrixMultiplier
         std::vector<float> B11(size), B12(size), B21(size), B22(size);
 
         // Разделение матриц
-        for (unsigned int i = 0; i < mid; ++i)
+        for (size_t i = 0; i < mid; ++i)
         {
-            for (unsigned int j = 0; j < mid; ++j)
+            for (size_t j = 0; j < mid; ++j)
             {
                 int index = i * mid + j;
                 A11[index] = A[i * n + j];
@@ -143,8 +145,9 @@ class MatrixMultiplier
 
     // Метод Винограда
     std::vector<float> winograd_multiply(const std::vector<float> &A,
-                                         const std::vector<float> &B, int rowsA,
-                                         int colsA, int colsB)
+                                         const std::vector<float> &B,
+                                         size_t rowsA, size_t colsA,
+                                         size_t colsB)
     {
         if (A.size() != rowsA * colsA || B.size() != colsA * colsB)
         {
@@ -207,8 +210,8 @@ class MatrixMultiplier
 
     // Метод автоматического выбора подходящего алгоритма
     std::vector<float> auto_multiply(const std::vector<float> &A,
-                                     const std::vector<float> &B, int rowsA,
-                                     int colsA, int colsB)
+                                     const std::vector<float> &B, size_t rowsA,
+                                     size_t colsA, size_t colsB)
     {
         if (A.size() != rowsA * colsA || B.size() != colsA * colsB)
         {
@@ -252,8 +255,6 @@ class MatrixMultiplier
     }
 };
 
-namespace ttie
-{
 template <typename T>
 static std::string vector_to_string(const std::vector<T> &vec, size_t limit = 5)
 {
