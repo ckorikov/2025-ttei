@@ -494,6 +494,272 @@ struct Tanh : Layer
     std::string to_string() const override { return "Tanh()"; }
 };
 
+struct Softmax : Layer
+{
+    std::vector<Tensor *> parameters() override { return {}; }
+
+    void forward(const Tensor &input, Tensor &output) override
+    {
+        output.shape = input.shape;
+        output.resize();
+
+        size_t size = input.data.size();
+        float max_input =
+            *std::max_element(input.data.begin(), input.data.end());
+
+        float sum_exp = 0.0f;
+        for (size_t i = 0; i < size; ++i)
+        {
+            output.data[i] = std::exp(input.data[i] - max_input);
+            sum_exp += output.data[i];
+        }
+
+        // Нормируем экспоненты, получая Softmax
+        for (size_t i = 0; i < size; ++i)
+        {
+            output.data[i] /= sum_exp;
+        }
+    }
+
+    void backward(const Tensor &output, Tensor &input) override
+    {
+        input.resize_grad();
+        size_t size = output.data.size();
+
+        for (size_t i = 0; i < size; ++i)
+        {
+            float grad_sum = 0.0f;
+            for (size_t j = 0; j < size; ++j)
+            {
+                float jacobian = output.data[i] * ((i == j) - output.data[j]);
+                grad_sum += jacobian * output.grad[j];
+            }
+            input.grad[i] = grad_sum;
+        }
+    }
+
+    std::string to_string() const override { return "Softmax()"; }
+};
+
+struct StableSoftmaxLSE : Layer
+{
+    std::vector<Tensor *> parameters() override { return {}; }
+
+    // Log-Sum-Exp Trick
+    float log_sum_exp(const std::vector<float> &x)
+    {
+        float max_val = *std::max_element(x.begin(), x.end());
+        float sum = 0.0f;
+        for (float xi : x)
+            sum += std::exp(xi - max_val);
+        return max_val + std::log(sum);
+    }
+
+    void forward(const Tensor &input, Tensor &output) override
+    {
+        output.shape = input.shape;
+        output.resize();
+
+        float lse = log_sum_exp(input.data);
+
+        for (size_t i = 0; i < input.data.size(); ++i)
+            output.data[i] = std::exp(input.data[i] - lse);
+    }
+
+    void backward(const Tensor &output, Tensor &input) override
+    {
+        input.resize_grad();
+        size_t size = output.data.size();
+
+        for (size_t i = 0; i < size; ++i)
+        {
+            float grad_sum = 0.0f;
+            for (size_t j = 0; j < size; ++j)
+            {
+                float jacobian = output.data[i] * ((i == j) - output.data[j]);
+                grad_sum += jacobian * output.grad[j];
+            }
+            input.grad[i] = grad_sum;
+        }
+    }
+
+    std::string to_string() const override { return "StableSoftmaxLSE()"; }
+};
+
+class MaxPool1d : public Layer
+{
+  public:
+    size_t kernel_size;
+    size_t stride;
+    std::vector<size_t> indices;
+
+    MaxPool1d(size_t kernel_size_, size_t stride_)
+        : kernel_size(kernel_size_), stride(stride_)
+    {
+    }
+
+    std::vector<Tensor *> parameters() override { return {}; }
+
+    void forward(const Tensor &input, Tensor &output) override
+    {
+        size_t input_length = input.shape[0];
+        size_t output_length = (input_length - kernel_size) / stride + 1;
+
+        output.shape = {output_length};
+        output.resize();
+        indices.resize(output_length);
+
+        for (size_t i = 0; i < output_length; ++i)
+        {
+            size_t start = i * stride;
+            size_t end = start + kernel_size;
+
+            auto max_iter = std::max_element(input.data.begin() + start,
+                                             input.data.begin() + end);
+            output.data[i] = *max_iter;
+            indices[i] = std::distance(input.data.begin(), max_iter);
+        }
+    }
+
+    void backward(const Tensor &output, Tensor &input) override
+    {
+        input.resize_grad();
+        std::fill(input.grad.begin(), input.grad.end(), 0.0f);
+
+        for (size_t i = 0; i < output.grad.size(); ++i)
+        {
+            input.grad[indices[i]] += output.grad[i];
+        }
+    }
+
+    std::string to_string() const override
+    {
+        return "MaxPool1d(kernel_size=" + std::to_string(kernel_size) +
+               ", stride=" + std::to_string(stride) + ")";
+    }
+};
+
+class QuantizedLinear : public Layer
+{
+  public:
+    size_t in_features, out_features;
+    float input_scale, weight_scale;
+    int32_t input_zero_point, weight_zero_point;
+
+    std::vector<std::vector<int8_t>> quantized_weights;
+    std::vector<int32_t> quantized_biases;
+
+    QuantizedLinear(size_t in_f, size_t out_f)
+        : in_features(in_f), out_features(out_f)
+    {
+        quantized_weights.resize(out_features,
+                                 std::vector<int8_t>(in_features, 0));
+        quantized_biases.resize(out_features, 0);
+    }
+
+    void compute_quant_params(const std::vector<float> &tensor, float &scale,
+                              int32_t &zero_point, bool symmetric = false)
+    {
+        float min_val = *std::min_element(tensor.begin(), tensor.end());
+        float max_val = *std::max_element(tensor.begin(), tensor.end());
+
+        if (symmetric)
+        {
+            float abs_max = std::max(std::abs(min_val), std::abs(max_val));
+            scale = abs_max / 127.0f;
+            zero_point = 0;
+        }
+        else
+        {
+            scale = (max_val - min_val) / 255.0f;
+            zero_point = static_cast<int32_t>(std::round(-min_val / scale));
+            zero_point = std::max(0, std::min(255, zero_point));
+        }
+    }
+
+    int8_t quantize_value(float real_val, float scale, int32_t zero_point)
+    {
+        int32_t quantized =
+            static_cast<int32_t>(std::round(real_val / scale)) + zero_point;
+        return static_cast<int8_t>(
+            std::max(-128, std::min(127, quantized - 128)));
+    }
+
+    float dequantize_value(int32_t quant_val, float scale, int32_t zero_point)
+    {
+        return scale * (quant_val - zero_point);
+    }
+
+    void init_weights(const std::vector<std::vector<float>> &weights,
+                      const std::vector<float> &biases)
+    {
+        std::vector<float> flat_weights;
+        for (const auto &row : weights)
+            flat_weights.insert(flat_weights.end(), row.begin(), row.end());
+
+        compute_quant_params(flat_weights, weight_scale, weight_zero_point,
+                             false);
+
+        for (size_t i = 0; i < out_features; ++i)
+        {
+            quantized_biases[i] =
+                static_cast<int32_t>(std::round(biases[i] / (weight_scale)));
+            for (size_t j = 0; j < in_features; ++j)
+            {
+                quantized_weights[i][j] = quantize_value(
+                    weights[i][j], weight_scale, weight_zero_point);
+            }
+        }
+    }
+
+    std::vector<Tensor *> parameters() override { return {}; }
+
+    void forward(const Tensor &input, Tensor &output) override
+    {
+        assert(input.shape[0] == in_features);
+        output.shape = {out_features};
+        output.resize();
+
+        compute_quant_params(input.data, input_scale, input_zero_point, false);
+
+        for (size_t i = 0; i < out_features; ++i)
+        {
+            int32_t acc = quantized_biases[i];
+            for (size_t j = 0; j < in_features; ++j)
+            {
+                int32_t input_q = quantize_value(input.data[j], input_scale,
+                                                 input_zero_point);
+                acc += (quantized_weights[i][j] + 128) * (input_q + 128);
+            }
+            output.data[i] =
+                dequantize_value(acc, input_scale * weight_scale, 0);
+        }
+    }
+
+    void backward(const Tensor &output, Tensor &input) override
+    {
+        input.resize_grad();
+        std::fill(input.grad.begin(), input.grad.end(), 0.0f);
+
+        for (size_t i = 0; i < out_features; ++i)
+        {
+            float grad_out = output.grad[i];
+            for (size_t j = 0; j < in_features; ++j)
+            {
+                float grad_weight = dequantize_value(
+                    quantized_weights[i][j], weight_scale, weight_zero_point);
+                input.grad[j] += grad_out * grad_weight;
+            }
+        }
+    }
+
+    std::string to_string() const override
+    {
+        return "QuantizedLinear(in_features=" + std::to_string(in_features) +
+               ", out_features=" + std::to_string(out_features) + ")";
+    }
+};
+
 struct Model
 {
     std::vector<Layer *> layers;
@@ -963,7 +1229,8 @@ struct LSTM : public Model
     LSTM(size_t D_in, size_t H, size_t L = 1)
         : input_dim(D_in), hidden_dim(H), num_layers(L)
     {
-        // LSTM layers initialization (independently by x and h like in torch.nn.LSTM)
+        // LSTM layers initialization (independently by x and h like in
+        // torch.nn.LSTM)
         for (size_t layer = 0; layer < num_layers; ++layer)
         {
             size_t in_dim = (layer == 0 ? input_dim : hidden_dim);
@@ -1149,7 +1416,8 @@ struct LSTM : public Model
 
         for (int t = static_cast<int>(T) - 1; t >= 0; --t) // Time step
         {
-            for (int l = static_cast<int>(num_layers) - 1; l >= 0; --l) // Layers step
+            for (int l = static_cast<int>(num_layers) - 1; l >= 0;
+                 --l) // Layers step
             {
                 size_t base = l * 16;
 
@@ -1267,8 +1535,7 @@ struct LSTM : public Model
 
                 // Gradients for next step
                 for (size_t i = 0; i < hidden_dim; ++i)
-                    h_next[l].grad[i] =
-                        h_prev.grad[i];
+                    h_next[l].grad[i] = h_prev.grad[i];
 
                 for (size_t i = 0; i < hidden_dim; ++i)
                     c_next[l].grad[i] = c_t.grad[i] * f_t.data[i];
