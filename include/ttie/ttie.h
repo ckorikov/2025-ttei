@@ -1494,6 +1494,140 @@ Tensor mse_loss(const Tensor &pred, const Tensor &target)
     return loss;
 }
 
+struct RNN : public Model
+{
+    size_t input_size;   // x
+    size_t hidden_size;  // h
+
+    mutable std::vector<Tensor> h;
+    mutable std::vector<Tensor> x_w;
+    mutable std::vector<Tensor> h_w;
+
+
+    RNN(size_t in_dim, size_t h_dim) 
+        : input_size(in_dim), hidden_size(h_dim)
+    {
+        // layers allocation
+        add_layer(new Linear(input_size, hidden_size));
+        add_layer(new Linear(hidden_size, hidden_size));
+        add_layer(new Tanh());
+        add_layer(new Linear(hidden_size, input_size));
+    }
+
+    void forward(const Tensor &inputs, Tensor &output) const
+    {   
+        // inputs(L, H_in) (unbatched)
+        size_t seq_len = inputs.shape[0];
+
+        h.resize(seq_len);
+        x_w.resize(seq_len);
+        h_w.resize(seq_len);
+
+        // outputs(1, H_out) (only from last hidden vector)
+        output.shape = {1, input_size};
+        output.resize();
+
+        // hidden vectors initialization
+        // h.shape = {seq_len, hidden_size};
+        // h.resize();
+        // std::fill(h.data.begin(), h.data.end(), 0.f);
+
+        // auxiliary tensors initialization
+        Tensor x_t, h_t_minus_1, x_w1, h_w2, x_plus_h, h_t;
+        x_t.shape = {1, input_size};
+        x_t.resize();
+        h_t_minus_1.shape = {1, hidden_size};
+        h_t_minus_1.resize();
+        x_w1.shape = {1, hidden_size};
+        x_w1.resize();
+        h_w2.shape = {1, hidden_size};
+        h_w2.resize();
+        x_plus_h.shape = {1, hidden_size};
+        x_plus_h.resize();
+        h_t.shape = {1, hidden_size};
+        h_t.resize();
+        std::fill(x_t.data.begin(), x_t.data.end(), 0.f);
+        std::fill(h_t_minus_1.data.begin(), h_t_minus_1.data.end(), 0.f);
+        std::fill(x_w1.data.begin(), x_w1.data.end(), 0.f);
+        std::fill(h_w2.data.begin(), h_w2.data.end(), 0.f);
+        std::fill(x_plus_h.data.begin(), x_plus_h.data.end(), 0.f);
+        std::fill(h_t.data.begin(), h_t.data.end(), 0.f);
+
+        // main part
+        for (size_t i = 0; i < seq_len; i++)
+        {
+            std::copy(inputs.data.begin() + i*input_size, inputs.data.begin() + (i + 1)*input_size, x_t.data.begin());
+            layers[0]->forward(x_t, x_w1); // Linear 1
+            layers[1]->forward(h_t_minus_1, h_w2); // Linear 2
+            for (size_t j = 0; j < hidden_size; j++)
+            {
+                x_plus_h.data[j] = x_w1.data[j] + h_w2.data[j];
+            }
+            layers[2]->forward(x_plus_h, h_t); // Tanh
+            h_t_minus_1 = h_t;
+            h[i] = h_t;
+            x_w[i] = x_w1;
+            h_w[i] = h_w2;
+            // std::copy(h_t.data.begin(), h_t.data.end(), h.data.begin() + i*hidden_size);
+        }
+
+        // output is the same size as input
+        layers[3]->forward(h_t, output); // Linear 3
+    }
+
+    void backward(const Tensor &output, Tensor &inputs) const
+    {
+        // inputs grads vectors initialization
+        inputs.resize_grad();
+        inputs.zero_grad();
+
+        size_t seq_len = inputs.shape[0];
+
+        // auxiliary tensors initialization
+        Tensor x_plus_h, x_t;
+        x_plus_h.shape = {1, hidden_size};
+        x_plus_h.resize();
+        x_plus_h.resize_grad();
+        x_plus_h.zero_grad();
+        x_t.shape = {1, input_size};
+        x_t.resize();
+        x_t.resize_grad();
+        x_t.zero_grad();
+        for (size_t i = 0; i < seq_len; i++)
+        {
+            h[i].resize_grad();
+            h[i].zero_grad();
+            x_w[i].resize_grad();
+            x_w[i].zero_grad();
+            h_w[i].resize_grad();
+            h_w[i].zero_grad();
+        }
+
+        layers[3]->backward(output, h[seq_len-1]);
+
+        // main part
+        for (int i = seq_len - 1; i >= 0; i--)
+        {
+            layers[2]->backward(h[i], x_plus_h);
+            std::copy(x_plus_h.grad.begin(), x_plus_h.grad.end(), x_w[i].grad.begin());
+            std::copy(x_plus_h.grad.begin(), x_plus_h.grad.end(), h_w[i].grad.begin());
+            std::copy(inputs.data.begin() + i*input_size, inputs.data.begin() + (i + 1)*input_size, x_t.data.begin());
+            layers[0]->backward(x_w[i], x_t);
+            std::copy(x_t.grad.begin(), x_t.grad.end(), inputs.grad.begin() + i*input_size);
+            if (i != 0)
+                layers[1]->backward(h_w[i], h[i-1]);
+        }
+    }
+
+    std::string to_string() const
+    {
+        std::stringstream ss;
+        ss << "RNN(Input dim = " << input_size << ", Hidden dim = "
+            << hidden_size << ")";
+        return ss.str();
+    }
+};
+
 struct LSTM : public Model
 {
     size_t input_dim;
